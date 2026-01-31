@@ -1,0 +1,2702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orchestral Orbits — Celestial Audio Simulator</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --void: #06060e;
+  --deep: #0c0c1a;
+  --panel: rgba(10, 10, 26, 0.88);
+  --panel-border: rgba(120, 140, 255, 0.12);
+  --accent: #7b8aff;
+  --accent-glow: rgba(123, 138, 255, 0.3);
+  --accent-hot: #ff6b8a;
+  --accent-warm: #ffb86b;
+  --accent-cool: #6bffd3;
+  --text: #c8cce8;
+  --text-dim: #6a6e8a;
+  --text-bright: #eef0ff;
+  --font-display: 'Chakra Petch', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--font-display);
+}
+
+#canvas-container {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+canvas#main-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ─── SIDEBAR ─── */
+#sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 380px;
+  height: 100%;
+  z-index: 100;
+  background: var(--panel);
+  border-left: 1px solid var(--panel-border);
+  backdrop-filter: blur(40px) saturate(1.2);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(0);
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+#sidebar.collapsed { transform: translateX(340px); }
+
+#sidebar-toggle {
+  position: absolute;
+  left: -44px;
+  top: 20px;
+  width: 44px;
+  height: 44px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: background 0.2s;
+}
+
+#sidebar-toggle:hover { background: rgba(123, 138, 255, 0.1); }
+
+.sidebar-header {
+  padding: 24px 28px 16px;
+  border-bottom: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+.sidebar-header h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+}
+
+.sidebar-header h1 span { color: var(--accent); }
+
+.sidebar-header p {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ─── STEPS NAV ─── */
+.steps-nav {
+  display: flex;
+  padding: 12px 28px;
+  gap: 4px;
+  border-bottom: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+.step-tab {
+  flex: 1;
+  padding: 8px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.25s;
+  position: relative;
+}
+
+.step-tab::before {
+  content: attr(data-step);
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 2px;
+  color: inherit;
+}
+
+.step-tab:hover { color: var(--text); background: rgba(123, 138, 255, 0.05); }
+
+.step-tab.active {
+  color: var(--accent);
+  background: rgba(123, 138, 255, 0.08);
+  border-color: var(--panel-border);
+}
+
+.step-tab.completed { color: var(--accent-cool); }
+.step-tab.completed::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-cool);
+}
+
+/* ─── PANELS ─── */
+.panels-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-border) transparent;
+}
+
+.panel { display: none; padding: 24px 28px; }
+.panel.active { display: block; }
+
+.panel-section {
+  margin-bottom: 24px;
+}
+
+.panel-section-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(120, 140, 255, 0.06);
+}
+
+/* ─── UPLOAD ZONE ─── */
+.upload-zone {
+  border: 2px dashed rgba(123, 138, 255, 0.2);
+  border-radius: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.upload-zone::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(123, 138, 255, 0.04) 0%, transparent 70%);
+  transition: opacity 0.3s;
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+  border-color: var(--accent);
+  background: rgba(123, 138, 255, 0.04);
+}
+
+.upload-zone.has-file {
+  border-color: var(--accent-cool);
+  border-style: solid;
+  padding: 20px 24px;
+}
+
+.upload-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.6;
+  display: block;
+}
+
+.upload-zone h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--text-bright);
+  margin-bottom: 8px;
+}
+
+.upload-zone p {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-info .file-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(107, 255, 211, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.file-info .file-details {
+  flex: 1;
+  text-align: left;
+}
+
+.file-info .file-name {
+  font-size: 12px;
+  color: var(--text-bright);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  display: block;
+}
+
+.file-info .file-meta {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.file-remove {
+  background: rgba(255, 107, 138, 0.1);
+  border: none;
+  color: var(--accent-hot);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.file-remove:hover { background: rgba(255, 107, 138, 0.2); }
+
+/* ─── AUDIO VISUALIZER ─── */
+.audio-viz {
+  margin-top: 16px;
+  height: 60px;
+  background: rgba(123, 138, 255, 0.04);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+.audio-viz canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.bpm-display {
+  margin-top: 12px;
+  display: flex;
+  gap: 12px;
+}
+
+.bpm-badge {
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(123, 138, 255, 0.08);
+  border: 1px solid var(--panel-border);
+}
+
+.bpm-badge strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ─── FORM CONTROLS ─── */
+.control-row {
+  margin-bottom: 16px;
+}
+
+.control-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.control-label .value {
+  color: var(--text);
+  font-weight: 500;
+}
+
+input[type="range"] {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(123, 138, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+select, input[type="number"] {
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(123, 138, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+select:focus, input[type="number"]:focus {
+  border-color: var(--accent);
+}
+
+select option { background: var(--deep); }
+
+/* ─── COLOR PICKERS ─── */
+.color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 2px solid var(--panel-border);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.color-swatch input[type="color"] {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.color-swatch-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  flex: 1;
+}
+
+.color-hex {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text);
+  background: rgba(123, 138, 255, 0.06);
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--panel-border);
+  width: 72px;
+  text-align: center;
+  outline: none;
+}
+
+/* ─── THEME PRESETS ─── */
+.theme-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.theme-preset {
+  padding: 14px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.25s;
+  position: relative;
+  overflow: hidden;
+}
+
+.theme-preset::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.15;
+  transition: opacity 0.25s;
+}
+
+.theme-preset.neon::before { background: linear-gradient(135deg, #ff00ff, #00ffff); }
+.theme-preset.ocean::before { background: linear-gradient(135deg, #0066ff, #00ccaa); }
+.theme-preset.glitch::before { background: linear-gradient(135deg, #ff0044, #ff8800); }
+
+.theme-preset:hover { border-color: rgba(123, 138, 255, 0.3); }
+.theme-preset:hover::before { opacity: 0.25; }
+
+.theme-preset.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(123, 138, 255, 0.15);
+}
+
+.theme-preset-icon {
+  font-size: 20px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.theme-preset-name {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+/* ─── MAPPING GRID ─── */
+.mapping-item {
+  background: rgba(123, 138, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.mapping-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.mapping-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mapping-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-bright);
+}
+
+.mapping-arrow {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  margin: 0 4px;
+}
+
+/* ─── BUTTONS ─── */
+.btn {
+  width: 100%;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 8px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), #9b6bff);
+  color: white;
+  box-shadow: 0 4px 20px rgba(123, 138, 255, 0.3);
+}
+
+.btn-primary:hover {
+  box-shadow: 0 4px 30px rgba(123, 138, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-secondary {
+  background: rgba(123, 138, 255, 0.1);
+  color: var(--accent);
+  border: 1px solid var(--panel-border);
+}
+
+.btn-secondary:hover {
+  background: rgba(123, 138, 255, 0.15);
+}
+
+.btn-render {
+  background: linear-gradient(135deg, var(--accent-hot), #ff8844);
+  color: white;
+  box-shadow: 0 4px 20px rgba(255, 107, 138, 0.3);
+}
+
+.btn-render:hover {
+  box-shadow: 0 4px 30px rgba(255, 107, 138, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-render:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ─── PROGRESS ─── */
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(123, 138, 255, 0.1);
+  border-radius: 2px;
+  margin-top: 12px;
+  overflow: hidden;
+  display: none;
+}
+
+.progress-bar.active { display: block; }
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-hot), var(--accent-warm));
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.3s;
+}
+
+.render-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  display: none;
+  text-align: center;
+}
+
+.render-status.active { display: block; }
+
+/* ─── FOOTER ─── */
+.sidebar-footer {
+  padding: 16px 28px;
+  border-top: 1px solid var(--panel-border);
+  flex-shrink: 0;
+}
+
+/* ─── STATUS BAR ─── */
+#status-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 380px;
+  height: 32px;
+  background: var(--panel);
+  border-top: 1px solid var(--panel-border);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  gap: 20px;
+  backdrop-filter: blur(20px);
+  transition: right 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#sidebar.collapsed ~ #status-bar { right: 40px; }
+
+.status-item { display: flex; align-items: center; gap: 6px; }
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.status-dot.active { background: var(--accent-cool); box-shadow: 0 0 6px var(--accent-cool); }
+.status-dot.warn { background: var(--accent-warm); }
+.status-dot.recording { background: var(--accent-hot); animation: pulse 1s infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── PLAY CONTROLS (overlay on canvas) ─── */
+#play-controls {
+  position: fixed;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(calc(-50% - 190px));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 8px 16px;
+  backdrop-filter: blur(20px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+
+#play-controls.visible { opacity: 1; pointer-events: auto; }
+
+.play-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+
+.play-btn:hover { transform: scale(1.1); }
+
+.time-display {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  min-width: 90px;
+  text-align: center;
+}
+
+.volume-slider {
+  width: 80px;
+}
+
+/* ─── INITIAL STATE ─── */
+#empty-state {
+  position: fixed;
+  inset: 0;
+  right: 380px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transition: opacity 0.5s;
+}
+
+#empty-state.hidden { opacity: 0; }
+
+.empty-orbit {
+  width: 200px;
+  height: 200px;
+  border: 1px dashed rgba(123, 138, 255, 0.15);
+  border-radius: 50%;
+  position: relative;
+  animation: spin 30s linear infinite;
+  margin-bottom: 32px;
+}
+
+.empty-orbit::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.empty-orbit-inner {
+  position: absolute;
+  inset: 30px;
+  border: 1px dashed rgba(123, 138, 255, 0.1);
+  border-radius: 50%;
+  animation: spin 15s linear infinite reverse;
+}
+
+.empty-orbit-inner::before {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-hot);
+  box-shadow: 0 0 10px rgba(255, 107, 138, 0.4);
+}
+
+.empty-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent-warm);
+  box-shadow: 0 0 20px rgba(255, 184, 107, 0.4);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty-text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 900px) {
+  #sidebar { width: 320px; }
+  #sidebar.collapsed { transform: translateX(280px); }
+  #status-bar { right: 320px; }
+}
+
+/* ─── SCROLLBAR ─── */
+.panels-container::-webkit-scrollbar { width: 4px; }
+.panels-container::-webkit-scrollbar-track { background: transparent; }
+.panels-container::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 2px; }
+
+/* ─── HIDDEN FILE INPUT ─── */
+#file-input { display: none; }
+</style>
+</head>
+<body>
+
+<!-- Three.js Canvas -->
+<div id="canvas-container">
+  <canvas id="main-canvas"></canvas>
+</div>
+
+<!-- Empty State -->
+<div id="empty-state">
+  <div class="empty-orbit">
+    <div class="empty-orbit-inner"></div>
+    <div class="empty-center"></div>
+  </div>
+  <div class="empty-text">Upload audio to begin simulation</div>
+</div>
+
+<!-- Playback Controls -->
+<div id="play-controls">
+  <button class="play-btn" id="btn-play" title="Play / Pause">&#9654;</button>
+  <span class="time-display" id="time-display">0:00 / 0:00</span>
+  <input type="range" class="volume-slider" id="volume-slider" min="0" max="1" step="0.01" value="0.8">
+</div>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <button id="sidebar-toggle" title="Toggle Panel">&#9776;</button>
+
+  <div class="sidebar-header">
+    <h1>Orchestral <span>Orbits</span></h1>
+    <p>Celestial Audio Simulator</p>
+  </div>
+
+  <nav class="steps-nav">
+    <button class="step-tab active" data-step="1" data-panel="panel-upload">Upload</button>
+    <button class="step-tab" data-step="2" data-panel="panel-configure">Map</button>
+    <button class="step-tab" data-step="3" data-panel="panel-style">Style</button>
+    <button class="step-tab" data-step="4" data-panel="panel-preview">Preview</button>
+    <button class="step-tab" data-step="5" data-panel="panel-render">Render</button>
+  </nav>
+
+  <div class="panels-container">
+
+    <!-- PANEL 1: UPLOAD -->
+    <div class="panel active" id="panel-upload">
+      <div class="panel-section">
+        <div class="panel-section-title">Audio Source</div>
+        <div class="upload-zone" id="upload-zone">
+          <span class="upload-icon">&#9835;</span>
+          <h3>Drop your audio file here</h3>
+          <p>.mp3 &middot; .wav &middot; .m4a</p>
+        </div>
+        <input type="file" id="file-input" accept=".mp3,.wav,.m4a,audio/*">
+      </div>
+
+      <div class="panel-section" id="analysis-section" style="display:none;">
+        <div class="panel-section-title">Frequency Analysis</div>
+        <div class="audio-viz">
+          <canvas id="freq-canvas"></canvas>
+        </div>
+        <div class="bpm-display">
+          <div class="bpm-badge"><strong id="bpm-value">---</strong> BPM</div>
+          <div class="bpm-badge">Duration: <strong id="duration-value">---</strong></div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-primary" id="btn-next-1" disabled>Continue to Mapping</button>
+      </div>
+    </div>
+
+    <!-- PANEL 2: CONFIGURE -->
+    <div class="panel" id="panel-configure">
+      <div class="panel-section">
+        <div class="panel-section-title">Audio &rarr; Physics Mapping</div>
+
+        <div class="mapping-item">
+          <div class="mapping-header">
+            <div class="mapping-dot" style="background:var(--accent-hot)"></div>
+            <span class="mapping-name">Bass / Low Freq</span>
+            <span class="mapping-arrow">&rarr;</span>
+            <span class="mapping-name" style="color:var(--accent)">Sun Mass</span>
+          </div>
+          <div class="control-row">
+            <div class="control-label">Intensity <span class="value" id="bass-intensity-val">75%</span></div>
+            <input type="range" id="bass-intensity" min="0" max="100" value="75">
+          </div>
+        </div>
+
+        <div class="mapping-item">
+          <div class="mapping-header">
+            <div class="mapping-dot" style="background:var(--accent-warm)"></div>
+            <span class="mapping-name">Harmony / Mids</span>
+            <span class="mapping-arrow">&rarr;</span>
+            <span class="mapping-name" style="color:var(--accent)">Gravity Constant</span>
+          </div>
+          <div class="control-row">
+            <div class="control-label">Intensity <span class="value" id="harmony-intensity-val">60%</span></div>
+            <input type="range" id="harmony-intensity" min="0" max="100" value="60">
+          </div>
+        </div>
+
+        <div class="mapping-item">
+          <div class="mapping-header">
+            <div class="mapping-dot" style="background:var(--accent-cool)"></div>
+            <span class="mapping-name">Melody / Highs</span>
+            <span class="mapping-arrow">&rarr;</span>
+            <span class="mapping-name" style="color:var(--accent)">Trail Emission</span>
+          </div>
+          <div class="control-row">
+            <div class="control-label">Intensity <span class="value" id="melody-intensity-val">80%</span></div>
+            <input type="range" id="melody-intensity" min="0" max="100" value="80">
+          </div>
+        </div>
+
+        <div class="mapping-item">
+          <div class="mapping-header">
+            <div class="mapping-dot" style="background:#ff44aa"></div>
+            <span class="mapping-name">Drums / Transients</span>
+            <span class="mapping-arrow">&rarr;</span>
+            <span class="mapping-name" style="color:var(--accent)">Gravity Waves</span>
+          </div>
+          <div class="control-row">
+            <div class="control-label">Intensity <span class="value" id="drums-intensity-val">90%</span></div>
+            <input type="range" id="drums-intensity" min="0" max="100" value="90">
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-section-title">Simulation Parameters</div>
+        <div class="control-row">
+          <div class="control-label">Planet Count <span class="value" id="planet-count-val">5</span></div>
+          <input type="range" id="planet-count" min="2" max="12" value="5">
+        </div>
+        <div class="control-row">
+          <div class="control-label">Time Scale <span class="value" id="time-scale-val">1.0x</span></div>
+          <input type="range" id="time-scale" min="0.1" max="3" step="0.1" value="1">
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-primary" id="btn-next-2">Continue to Style</button>
+      </div>
+    </div>
+
+    <!-- PANEL 3: STYLE -->
+    <div class="panel" id="panel-style">
+      <div class="panel-section">
+        <div class="panel-section-title">Visual Theme</div>
+        <div class="theme-presets">
+          <button class="theme-preset neon active" data-theme="neon">
+            <span class="theme-preset-icon">&#10038;</span>
+            <span class="theme-preset-name">Neon</span>
+          </button>
+          <button class="theme-preset ocean" data-theme="ocean">
+            <span class="theme-preset-icon">&#10053;</span>
+            <span class="theme-preset-name">Ocean</span>
+          </button>
+          <button class="theme-preset glitch" data-theme="glitch">
+            <span class="theme-preset-icon">&#9889;</span>
+            <span class="theme-preset-name">Glitch</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-section-title">Custom Colors</div>
+        <div class="color-row">
+          <div class="color-swatch" style="background:#ff6b8a;">
+            <input type="color" id="color-sun" value="#ff6b8a">
+          </div>
+          <span class="color-swatch-label">Sun</span>
+          <input type="text" class="color-hex" data-for="color-sun" value="#ff6b8a">
+        </div>
+        <div class="color-row">
+          <div class="color-swatch" style="background:#7b8aff;">
+            <input type="color" id="color-planet" value="#7b8aff">
+          </div>
+          <span class="color-swatch-label">Planets</span>
+          <input type="text" class="color-hex" data-for="color-planet" value="#7b8aff">
+        </div>
+        <div class="color-row">
+          <div class="color-swatch" style="background:#6bffd3;">
+            <input type="color" id="color-trail" value="#6bffd3">
+          </div>
+          <span class="color-swatch-label">Trails</span>
+          <input type="text" class="color-hex" data-for="color-trail" value="#6bffd3">
+        </div>
+        <div class="color-row">
+          <div class="color-swatch" style="background:#0a0a1a;">
+            <input type="color" id="color-bg" value="#0a0a1a">
+          </div>
+          <span class="color-swatch-label">Background</span>
+          <input type="text" class="color-hex" data-for="color-bg" value="#0a0a1a">
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-section-title">Effects</div>
+        <div class="control-row">
+          <div class="control-label">Trail Length <span class="value" id="trail-length-val">120</span></div>
+          <input type="range" id="trail-length" min="10" max="400" value="120">
+        </div>
+        <div class="control-row">
+          <div class="control-label">Bloom Intensity <span class="value" id="bloom-val">0.8</span></div>
+          <input type="range" id="bloom-intensity" min="0" max="2" step="0.05" value="0.8">
+        </div>
+        <div class="control-row">
+          <div class="control-label">Starfield Density <span class="value" id="star-density-val">2000</span></div>
+          <input type="range" id="star-density" min="500" max="8000" step="100" value="2000">
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-primary" id="btn-next-3">Continue to Preview</button>
+      </div>
+    </div>
+
+    <!-- PANEL 4: PREVIEW -->
+    <div class="panel" id="panel-preview">
+      <div class="panel-section">
+        <div class="panel-section-title">Real-Time Preview</div>
+        <p style="font-size:11px;color:var(--text-dim);margin-bottom:16px;line-height:1.5;">
+          Lower-resolution preview for real-time tweaking. The 3D canvas on the left shows the live simulation synced to your audio.
+        </p>
+        <button class="btn btn-primary" id="btn-start-preview">Start Preview</button>
+        <button class="btn btn-secondary" id="btn-stop-preview" style="display:none;margin-top:8px;">Stop Preview</button>
+      </div>
+
+      <div class="panel-section" id="preview-stats" style="display:none;">
+        <div class="panel-section-title">Live Statistics</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          <div class="bpm-badge">FPS: <strong id="stat-fps">--</strong></div>
+          <div class="bpm-badge">Bodies: <strong id="stat-bodies">--</strong></div>
+          <div class="bpm-badge">Energy: <strong id="stat-energy">--</strong></div>
+          <div class="bpm-badge">Bass: <strong id="stat-bass">--</strong></div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn btn-primary" id="btn-next-4">Continue to Render</button>
+      </div>
+    </div>
+
+    <!-- PANEL 5: RENDER -->
+    <div class="panel" id="panel-render">
+      <div class="panel-section">
+        <div class="panel-section-title">Export Settings</div>
+        <div class="control-row">
+          <div class="control-label">Resolution</div>
+          <select id="render-res">
+            <option value="1920x1080">1080p (1920 x 1080)</option>
+            <option value="3840x2160">4K (3840 x 2160)</option>
+          </select>
+        </div>
+        <div class="control-row">
+          <div class="control-label">Frame Rate</div>
+          <select id="render-fps">
+            <option value="30">30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-section-title">Render Output</div>
+        <button class="btn btn-render" id="btn-render">Begin Render</button>
+        <div class="progress-bar" id="render-progress">
+          <div class="progress-fill" id="render-fill"></div>
+        </div>
+        <div class="render-status" id="render-status">Initializing...</div>
+        <button class="btn btn-secondary" id="btn-download" style="display:none;margin-top:12px;">Download MP4</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Status Bar -->
+<div id="status-bar">
+  <div class="status-item">
+    <div class="status-dot" id="dot-audio"></div>
+    <span id="status-audio">No audio</span>
+  </div>
+  <div class="status-item">
+    <div class="status-dot" id="dot-sim"></div>
+    <span id="status-sim">Idle</span>
+  </div>
+  <div class="status-item">
+    <div class="status-dot" id="dot-render"></div>
+    <span id="status-render">Ready</span>
+  </div>
+  <div class="status-item" style="margin-left:auto;">
+    <span id="status-info">Orchestral Orbits v1.0</span>
+  </div>
+</div>
+
+<input type="file" id="file-input" accept=".mp3,.wav,.m4a,audio/*" style="display:none;">
+
+<!-- Three.js + dependencies -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// ORCHESTRAL ORBITS — Main Application
+// ═══════════════════════════════════════════════════════════════
+
+(() => {
+'use strict';
+
+// ─── STATE ───
+const state = {
+  audioFile: null,
+  audioBuffer: null,
+  audioContext: null,
+  analyser: null,
+  sourceNode: null,
+  gainNode: null,
+  isPlaying: false,
+  isPreviewing: false,
+  isRendering: false,
+  currentTime: 0,
+  duration: 0,
+  bpm: 120,
+  currentStep: 1,
+  theme: 'neon',
+  config: {
+    bassIntensity: 0.75,
+    harmonyIntensity: 0.60,
+    melodyIntensity: 0.80,
+    drumsIntensity: 0.90,
+    planetCount: 5,
+    timeScale: 1.0,
+    trailLength: 120,
+    bloomIntensity: 0.8,
+    starDensity: 2000,
+    colors: {
+      sun: '#ff6b8a',
+      planet: '#7b8aff',
+      trail: '#6bffd3',
+      bg: '#0a0a1a'
+    }
+  }
+};
+
+// ─── THREE.JS SETUP ───
+const canvas = document.getElementById('main-canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
+camera.position.set(0, 80, 180);
+camera.lookAt(0, 0, 0);
+
+// Ambient light
+scene.add(new THREE.AmbientLight(0x222244, 0.5));
+
+// ─── STARFIELD ───
+let starField = null;
+function createStarfield(count) {
+  if (starField) scene.remove(starField);
+  const geom = new THREE.BufferGeometry();
+  const positions = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const r = 800 + Math.random() * 1500;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+    positions[i * 3 + 2] = r * Math.cos(phi);
+    sizes[i] = 0.5 + Math.random() * 2;
+  }
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(0xccccff) }
+    },
+    vertexShader: `
+      attribute float size;
+      uniform float uTime;
+      varying float vAlpha;
+      void main() {
+        vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+        float flicker = sin(uTime * 2.0 + position.x * 0.01) * 0.3 + 0.7;
+        vAlpha = flicker;
+        gl_PointSize = size * (300.0 / -mvPos.z);
+        gl_Position = projectionMatrix * mvPos;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor;
+      varying float vAlpha;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        if (d > 0.5) discard;
+        float alpha = smoothstep(0.5, 0.0, d) * vAlpha;
+        gl_FragColor = vec4(uColor, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
+
+  starField = new THREE.Points(geom, mat);
+  scene.add(starField);
+}
+createStarfield(state.config.starDensity);
+
+// ─── SUN ───
+const sunGeom = new THREE.SphereGeometry(5, 64, 64);
+const sunMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTime: { value: 0 },
+    uColor: { value: new THREE.Color(state.config.colors.sun) },
+    uBass: { value: 0 },
+    uScale: { value: 1 }
+  },
+  vertexShader: `
+    uniform float uTime;
+    uniform float uBass;
+    uniform float uScale;
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    void main() {
+      vNormal = normal;
+      vPosition = position;
+      float displacement = sin(position.x * 3.0 + uTime * 2.0) *
+                           sin(position.y * 3.0 + uTime * 1.5) *
+                           sin(position.z * 3.0 + uTime) * uBass * 0.8;
+      vec3 newPos = position * uScale + normal * displacement;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 uColor;
+    uniform float uTime;
+    uniform float uBass;
+    varying vec3 vNormal;
+    varying vec3 vPosition;
+    void main() {
+      float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
+      vec3 glow = uColor * (1.0 + fresnel * 2.0 + uBass * 0.5);
+      float pulse = sin(uTime * 3.0) * 0.1 + 1.0;
+      gl_FragColor = vec4(glow * pulse, 1.0);
+    }
+  `
+});
+const sun = new THREE.Mesh(sunGeom, sunMat);
+scene.add(sun);
+
+// Sun glow sprite
+const glowTexture = createGlowTexture();
+const glowMat = new THREE.SpriteMaterial({
+  map: glowTexture,
+  color: new THREE.Color(state.config.colors.sun),
+  transparent: true,
+  blending: THREE.AdditiveBlending,
+  opacity: 0.6
+});
+const sunGlow = new THREE.Sprite(glowMat);
+sunGlow.scale.set(40, 40, 1);
+scene.add(sunGlow);
+
+// Point light at sun
+const sunLight = new THREE.PointLight(new THREE.Color(state.config.colors.sun), 2, 500);
+scene.add(sunLight);
+
+function createGlowTexture() {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.2, 'rgba(255,200,150,0.6)');
+  grad.addColorStop(0.5, 'rgba(255,100,100,0.2)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  return tex;
+}
+
+// ─── PHYSICS CONSTANTS (must be before CelestialBody) ───
+const G = 3;
+const sunMass = 80;
+const SOFTENING = 4;
+
+// ─── PLANETS (N-Body) ───
+let planets = [];
+let trailGeometries = [];
+let simulationRunning = false;
+
+class CelestialBody {
+  constructor(index, total) {
+    this.index = index;
+    const angle = (index / total) * Math.PI * 2;
+    const radius = 30 + index * 15;
+    this.pos = new THREE.Vector3(
+      Math.cos(angle) * radius,
+      (Math.random() - 0.5) * 4,
+      Math.sin(angle) * radius
+    );
+    // Correct circular orbit velocity: v = sqrt(G * M * r / (r^2 + softening^2))
+    const speed = Math.sqrt(G * sunMass * radius / (radius * radius + SOFTENING * SOFTENING));
+    this.vel = new THREE.Vector3(
+      -Math.sin(angle) * speed,
+      0,
+      Math.cos(angle) * speed
+    );
+    this.acc = new THREE.Vector3();
+    this.mass = 0.5 + Math.random() * 1.5;
+    this.baseRadius = 1.5 + Math.random() * 2;
+
+    // Mesh
+    const geom = new THREE.SphereGeometry(this.baseRadius, 32, 32);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(state.config.colors.planet) },
+        uEmissive: { value: 0.5 },
+        uTime: { value: 0 }
+      },
+      vertexShader: `
+        varying vec3 vNormal;
+        varying vec3 vWorldPos;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uEmissive;
+        uniform float uTime;
+        varying vec3 vNormal;
+        varying vec3 vWorldPos;
+        void main() {
+          vec3 lightDir = normalize(-vWorldPos);
+          float diff = max(dot(vNormal, lightDir), 0.0);
+          vec3 col = uColor * (0.3 + diff * 0.5 + uEmissive * 0.4);
+          float rim = pow(1.0 - abs(dot(vNormal, lightDir)), 3.0);
+          col += uColor * rim * 0.5;
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    });
+    this.mesh = new THREE.Mesh(geom, mat);
+    this.mesh.position.copy(this.pos);
+    scene.add(this.mesh);
+
+    // Trail
+    this.trailMax = state.config.trailLength;
+    this.trail = [];
+    this.trailGeom = new THREE.BufferGeometry();
+    const trailPositions = new Float32Array(this.trailMax * 3);
+    const trailAlphas = new Float32Array(this.trailMax);
+    this.trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+    this.trailGeom.setAttribute('alpha', new THREE.BufferAttribute(trailAlphas, 1));
+    this.trailGeom.setDrawRange(0, 0);
+
+    this.trailMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(state.config.colors.trail) },
+        uBrightness: { value: 1.0 }
+      },
+      vertexShader: `
+        attribute float alpha;
+        varying float vAlpha;
+        uniform float uBrightness;
+        void main() {
+          vAlpha = alpha;
+          vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPos;
+          gl_PointSize = 2.0;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uBrightness;
+        varying float vAlpha;
+        void main() {
+          float a = vAlpha * 0.8 * uBrightness;
+          vec3 col = uColor * uBrightness;
+          gl_FragColor = vec4(col, a);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+
+    this.trailLine = new THREE.Line(this.trailGeom, this.trailMat);
+    scene.add(this.trailLine);
+  }
+
+  updateTrail() {
+    this.trail.push(this.pos.clone());
+    if (this.trail.length > this.trailMax) this.trail.shift();
+
+    const positions = this.trailGeom.attributes.position.array;
+    const alphas = this.trailGeom.attributes.alpha.array;
+    for (let i = 0; i < this.trail.length; i++) {
+      positions[i * 3] = this.trail[i].x;
+      positions[i * 3 + 1] = this.trail[i].y;
+      positions[i * 3 + 2] = this.trail[i].z;
+      alphas[i] = i / this.trail.length;
+    }
+    this.trailGeom.attributes.position.needsUpdate = true;
+    this.trailGeom.attributes.alpha.needsUpdate = true;
+    this.trailGeom.setDrawRange(0, this.trail.length);
+  }
+
+  destroy() {
+    scene.remove(this.mesh);
+    scene.remove(this.trailLine);
+    this.mesh.geometry.dispose();
+    this.mesh.material.dispose();
+    this.trailGeom.dispose();
+    this.trailMat.dispose();
+  }
+}
+
+function createPlanets(count) {
+  planets.forEach(p => p.destroy());
+  planets = [];
+  for (let i = 0; i < count; i++) {
+    planets.push(new CelestialBody(i, count));
+  }
+}
+createPlanets(state.config.planetCount);
+
+// ─── GRAVITATIONAL WAVE RING ───
+const waveRings = [];
+function createGravWave(intensity) {
+  const geom = new THREE.RingGeometry(0.3, 5, 64);
+  const mat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(state.config.colors.sun),
+    transparent: true,
+    opacity: Math.min(intensity * 1.2, 1.0),
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending
+  });
+  const ring = new THREE.Mesh(geom, mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.userData = { life: 0, maxLife: 45, intensity };
+  scene.add(ring);
+  waveRings.push(ring);
+}
+
+function updateWaveRings() {
+  for (let i = waveRings.length - 1; i >= 0; i--) {
+    const ring = waveRings[i];
+    ring.userData.life++;
+    const t = ring.userData.life / ring.userData.maxLife;
+    const scale = 3 + t * 250;
+    ring.scale.set(scale, scale, scale);
+    ring.material.opacity = Math.pow(1 - t, 1.5) * ring.userData.intensity * 0.9;
+    if (t >= 1) {
+      scene.remove(ring);
+      ring.geometry.dispose();
+      ring.material.dispose();
+      waveRings.splice(i, 1);
+    }
+  }
+}
+
+// ─── PARTICLE SYSTEM ───
+const MAX_PARTICLES = 3000;
+const pPos = new Float32Array(MAX_PARTICLES * 3);
+const pVel = [];
+const pLife = new Float32Array(MAX_PARTICLES);
+const pMaxLife = new Float32Array(MAX_PARTICLES);
+let pHead = 0;
+for (let i = 0; i < MAX_PARTICLES; i++) {
+  pVel.push(new THREE.Vector3());
+  pLife[i] = 0;
+  pMaxLife[i] = 1;
+}
+
+const particleGeom = new THREE.BufferGeometry();
+particleGeom.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+particleGeom.setAttribute('life', new THREE.BufferAttribute(pLife, 1));
+const particleMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uColor: { value: new THREE.Color(state.config.colors.trail) }
+  },
+  vertexShader: `
+    attribute float life;
+    varying float vLife;
+    void main() {
+      vLife = life;
+      vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = life * 5.0 * (250.0 / -mvPos.z);
+      gl_Position = projectionMatrix * mvPos;
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 uColor;
+    varying float vLife;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      float alpha = smoothstep(0.5, 0.05, d) * vLife;
+      gl_FragColor = vec4(uColor * (1.0 + vLife * 2.0), alpha);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending
+});
+const particleSystem = new THREE.Points(particleGeom, particleMat);
+scene.add(particleSystem);
+
+function emitParticles(intensity, sourcePos) {
+  const count = Math.floor(intensity * 15);
+  for (let i = 0; i < count; i++) {
+    pPos[pHead * 3] = sourcePos.x + (Math.random() - 0.5) * 2;
+    pPos[pHead * 3 + 1] = sourcePos.y + (Math.random() - 0.5) * 2;
+    pPos[pHead * 3 + 2] = sourcePos.z + (Math.random() - 0.5) * 2;
+    pVel[pHead].set(
+      (Math.random() - 0.5) * 4 * intensity,
+      (Math.random() - 0.5) * 4 * intensity,
+      (Math.random() - 0.5) * 4 * intensity
+    );
+    pLife[pHead] = 1.0;
+    pMaxLife[pHead] = 0.4 + Math.random() * 1.2;
+    pHead = (pHead + 1) % MAX_PARTICLES;
+  }
+}
+
+function emitBurst(intensity) {
+  // Emit from sun on bass hits
+  const count = Math.floor(intensity * 40);
+  for (let i = 0; i < count; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const speed = 2 + Math.random() * 6 * intensity;
+    pPos[pHead * 3] = Math.sin(phi) * Math.cos(theta) * 6;
+    pPos[pHead * 3 + 1] = Math.sin(phi) * Math.sin(theta) * 6;
+    pPos[pHead * 3 + 2] = Math.cos(phi) * 6;
+    pVel[pHead].set(
+      Math.sin(phi) * Math.cos(theta) * speed,
+      Math.sin(phi) * Math.sin(theta) * speed,
+      Math.cos(phi) * speed
+    );
+    pLife[pHead] = 1.0;
+    pMaxLife[pHead] = 0.3 + Math.random() * 0.8;
+    pHead = (pHead + 1) % MAX_PARTICLES;
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = 0; i < MAX_PARTICLES; i++) {
+    if (pLife[i] <= 0) continue;
+    pLife[i] -= dt / pMaxLife[i];
+    if (pLife[i] <= 0) { pLife[i] = 0; continue; }
+    pPos[i * 3] += pVel[i].x;
+    pPos[i * 3 + 1] += pVel[i].y;
+    pPos[i * 3 + 2] += pVel[i].z;
+    pVel[i].multiplyScalar(0.96);
+  }
+  particleGeom.attributes.position.needsUpdate = true;
+  particleGeom.attributes.life.needsUpdate = true;
+}
+
+// ─── PHYSICS ENGINE (Velocity-Verlet N-Body) ───
+
+function computeAccelerations(bodies, currentSunMass, gravityMod) {
+  const effectiveG = G * gravityMod;
+  for (let i = 0; i < bodies.length; i++) {
+    const body = bodies[i];
+    body.acc.set(0, 0, 0);
+
+    // Attraction to sun
+    const toSun = new THREE.Vector3().subVectors(new THREE.Vector3(0, 0, 0), body.pos);
+    const distSun = toSun.length();
+    const forceSun = effectiveG * currentSunMass * body.mass / (distSun * distSun + SOFTENING * SOFTENING);
+    body.acc.add(toSun.normalize().multiplyScalar(forceSun / body.mass));
+
+    // N-body interactions
+    for (let j = 0; j < bodies.length; j++) {
+      if (i === j) continue;
+      const other = bodies[j];
+      const dir = new THREE.Vector3().subVectors(other.pos, body.pos);
+      const dist = dir.length();
+      const force = effectiveG * other.mass * body.mass / (dist * dist + SOFTENING * SOFTENING);
+      body.acc.add(dir.normalize().multiplyScalar(force / body.mass));
+    }
+
+    // Gentle Y-plane damping to keep things mostly 2D
+    body.acc.y -= body.pos.y * 0.02;
+  }
+}
+
+function velocityVerletStep(dt, currentSunMass, gravityMod) {
+  const bodies = planets;
+
+  // Half-step velocity
+  for (const body of bodies) {
+    body.vel.add(body.acc.clone().multiplyScalar(dt * 0.5));
+  }
+
+  // Full-step position
+  for (const body of bodies) {
+    body.pos.add(body.vel.clone().multiplyScalar(dt));
+  }
+
+  // Compute new accelerations
+  computeAccelerations(bodies, currentSunMass, gravityMod);
+
+  // Half-step velocity (second half)
+  for (const body of bodies) {
+    body.vel.add(body.acc.clone().multiplyScalar(dt * 0.5));
+  }
+
+  // Update meshes
+  for (const body of bodies) {
+    body.mesh.position.copy(body.pos);
+    body.updateTrail();
+  }
+}
+
+// ─── AUDIO ANALYSIS ───
+const freqBands = { bass: 0, mids: 0, highs: 0, transient: 0 };
+let lastBassEnergy = 0;
+let freqData = null;
+let freqCanvas, freqCtx;
+
+function initAudioContext() {
+  if (!state.audioContext) {
+    state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+
+function analyzeFrequencyBands() {
+  if (!state.analyser || !state.isPlaying) {
+    freqBands.bass = 0; freqBands.mids = 0; freqBands.highs = 0; freqBands.transient = 0;
+    return;
+  }
+  const data = new Uint8Array(state.analyser.frequencyBinCount);
+  state.analyser.getByteFrequencyData(data);
+  freqData = data;
+
+  const binCount = data.length;
+  const bassEnd = Math.floor(binCount * 0.1);
+  const midEnd = Math.floor(binCount * 0.4);
+
+  let bassSum = 0, midSum = 0, highSum = 0;
+  for (let i = 0; i < bassEnd; i++) bassSum += data[i];
+  for (let i = bassEnd; i < midEnd; i++) midSum += data[i];
+  for (let i = midEnd; i < binCount; i++) highSum += data[i];
+
+  freqBands.bass = (bassSum / bassEnd) / 255;
+  freqBands.mids = (midSum / (midEnd - bassEnd)) / 255;
+  freqBands.highs = (highSum / (binCount - midEnd)) / 255;
+
+  // Transient detection (sharp bass increase)
+  const bassEnergy = freqBands.bass;
+  freqBands.transient = Math.max(0, bassEnergy - lastBassEnergy) * 3;
+  lastBassEnergy = bassEnergy * 0.9 + lastBassEnergy * 0.1;
+}
+
+function drawFrequencyViz() {
+  if (!freqCanvas) {
+    freqCanvas = document.getElementById('freq-canvas');
+    freqCtx = freqCanvas.getContext('2d');
+    const rect = freqCanvas.parentElement.getBoundingClientRect();
+    freqCanvas.width = rect.width * 2;
+    freqCanvas.height = rect.height * 2;
+    freqCtx.scale(2, 2);
+  }
+
+  const w = freqCanvas.width / 2;
+  const h = freqCanvas.height / 2;
+  freqCtx.clearRect(0, 0, w, h);
+
+  if (!freqData) return;
+
+  const barW = w / 64;
+  for (let i = 0; i < 64; i++) {
+    const idx = Math.floor(i * freqData.length / 64);
+    const val = freqData[idx] / 255;
+    const barH = val * h * 0.9;
+
+    // Color by frequency band
+    let color;
+    if (i < 8) color = 'rgba(255,107,138,0.8)';        // bass
+    else if (i < 25) color = 'rgba(255,184,107,0.7)';   // mids
+    else color = 'rgba(107,255,211,0.6)';                // highs
+
+    freqCtx.fillStyle = color;
+    freqCtx.fillRect(i * barW + 1, h - barH, barW - 2, barH);
+  }
+}
+
+// ─── BPM DETECTION (Simple onset-based) ───
+function detectBPM(buffer) {
+  const offlineCtx = new OfflineAudioContext(1, buffer.length, buffer.sampleRate);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = buffer;
+
+  const filter = offlineCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 150;
+
+  source.connect(filter);
+  filter.connect(offlineCtx.destination);
+  source.start();
+
+  return offlineCtx.startRendering().then(renderedBuffer => {
+    const data = renderedBuffer.getChannelData(0);
+    const sampleRate = renderedBuffer.sampleRate;
+    const windowSize = Math.floor(sampleRate * 0.05);
+    const energies = [];
+
+    for (let i = 0; i < data.length; i += windowSize) {
+      let energy = 0;
+      for (let j = i; j < Math.min(i + windowSize, data.length); j++) {
+        energy += data[j] * data[j];
+      }
+      energies.push(energy / windowSize);
+    }
+
+    // Find peaks
+    const peaks = [];
+    const threshold = energies.reduce((a, b) => a + b, 0) / energies.length * 1.5;
+    for (let i = 1; i < energies.length - 1; i++) {
+      if (energies[i] > threshold && energies[i] > energies[i - 1] && energies[i] > energies[i + 1]) {
+        peaks.push(i);
+      }
+    }
+
+    if (peaks.length < 2) return 120;
+
+    // Average interval between peaks
+    let totalInterval = 0;
+    for (let i = 1; i < peaks.length; i++) {
+      totalInterval += peaks[i] - peaks[i - 1];
+    }
+    const avgInterval = totalInterval / (peaks.length - 1);
+    const intervalSec = avgInterval * 0.05;
+    let bpm = Math.round(60 / intervalSec);
+
+    // Clamp to reasonable range
+    while (bpm > 200) bpm /= 2;
+    while (bpm < 60) bpm *= 2;
+    return Math.round(bpm);
+  });
+}
+
+// ─── THEME PRESETS ───
+const themes = {
+  neon: {
+    sun: '#ff00ff', planet: '#00ffff', trail: '#ff66ff', bg: '#050510',
+    bloomIntensity: 1.2
+  },
+  ocean: {
+    sun: '#0088cc', planet: '#00ccaa', trail: '#44bbff', bg: '#040e18',
+    bloomIntensity: 0.6
+  },
+  glitch: {
+    sun: '#ff2200', planet: '#ffcc00', trail: '#ff4488', bg: '#0a0808',
+    bloomIntensity: 1.0
+  }
+};
+
+function applyTheme(name) {
+  const t = themes[name];
+  if (!t) return;
+  state.theme = name;
+  state.config.colors.sun = t.sun;
+  state.config.colors.planet = t.planet;
+  state.config.colors.trail = t.trail;
+  state.config.colors.bg = t.bg;
+  state.config.bloomIntensity = t.bloomIntensity;
+
+  // Update color inputs
+  document.getElementById('color-sun').value = t.sun;
+  document.getElementById('color-planet').value = t.planet;
+  document.getElementById('color-trail').value = t.trail;
+  document.getElementById('color-bg').value = t.bg;
+  document.querySelectorAll('.color-hex').forEach(el => {
+    const inp = document.getElementById(el.dataset.for);
+    if (inp) {
+      el.value = inp.value;
+      el.parentElement.querySelector('.color-swatch').style.background = inp.value;
+    }
+  });
+  document.getElementById('bloom-intensity').value = t.bloomIntensity;
+  document.getElementById('bloom-val').textContent = t.bloomIntensity.toFixed(1);
+
+  applyColors();
+}
+
+function applyColors() {
+  const c = state.config.colors;
+  sun.material.uniforms.uColor.value.set(c.sun);
+  sunGlow.material.color.set(c.sun);
+  sunLight.color.set(c.sun);
+  scene.background = new THREE.Color(c.bg);
+
+  planets.forEach(p => {
+    p.mesh.material.uniforms.uColor.value.set(c.planet);
+    p.trailMat.uniforms.uColor.value.set(c.trail);
+  });
+  particleMat.uniforms.uColor.value.set(c.trail);
+}
+
+// ─── CAMERA ORBIT ───
+let cameraAngle = 0;
+let cameraElevation = 0.5;
+let cameraDistance = 180;
+let isDragging = false;
+let lastMouse = { x: 0, y: 0 };
+let cameraShakeIntensity = 0;
+let bassEnvelope = 0;
+let prevBassForTransient = 0;
+
+canvas.addEventListener('mousedown', e => { isDragging = true; lastMouse = { x: e.clientX, y: e.clientY }; });
+canvas.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  const dx = e.clientX - lastMouse.x;
+  const dy = e.clientY - lastMouse.y;
+  cameraAngle += dx * 0.005;
+  cameraElevation = Math.max(-1.2, Math.min(1.2, cameraElevation + dy * 0.005));
+  lastMouse = { x: e.clientX, y: e.clientY };
+});
+canvas.addEventListener('mouseup', () => { isDragging = false; });
+canvas.addEventListener('mouseleave', () => { isDragging = false; });
+canvas.addEventListener('wheel', e => {
+  cameraDistance = Math.max(50, Math.min(500, cameraDistance + e.deltaY * 0.3));
+  e.preventDefault();
+}, { passive: false });
+
+function updateCamera() {
+  if (!isDragging && state.isPreviewing) {
+    cameraAngle += 0.002;
+  }
+  const shakeX = (Math.random() - 0.5) * cameraShakeIntensity;
+  const shakeY = (Math.random() - 0.5) * cameraShakeIntensity;
+  const shakeZ = (Math.random() - 0.5) * cameraShakeIntensity;
+  camera.position.set(
+    Math.sin(cameraAngle) * Math.cos(cameraElevation) * cameraDistance + shakeX,
+    Math.sin(cameraElevation) * cameraDistance * 0.5 + 30 + shakeY,
+    Math.cos(cameraAngle) * Math.cos(cameraElevation) * cameraDistance + shakeZ
+  );
+  camera.lookAt(shakeX * 0.3, shakeY * 0.3, shakeZ * 0.3);
+}
+
+// ─── GLITCH EFFECT ───
+let glitchIntensity = 0;
+function applyGlitchEffect(ctx, w, h) {
+  if (state.theme !== 'glitch' || glitchIntensity < 0.1) return;
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const d = imageData.data;
+  const shift = Math.floor(glitchIntensity * 15);
+
+  for (let y = 0; y < h; y++) {
+    if (Math.random() < glitchIntensity * 0.3) {
+      const offset = Math.floor((Math.random() - 0.5) * shift * 2);
+      for (let x = 0; x < w; x++) {
+        const srcIdx = (y * w + x) * 4;
+        const dstX = Math.min(w - 1, Math.max(0, x + offset));
+        const dstIdx = (y * w + dstX) * 4;
+        d[srcIdx] = d[dstIdx]; // R channel shift
+      }
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ─── MAIN RENDER LOOP ───
+let elapsedTime = 0;
+let lastFrameTime = 0;
+let frameCount = 0;
+let fpsDisplay = 0;
+let lastFPSUpdate = 0;
+
+function animate(timestamp) {
+  requestAnimationFrame(animate);
+
+  const dt = Math.min((timestamp - lastFrameTime) / 1000, 0.05);
+  lastFrameTime = timestamp;
+  elapsedTime += dt;
+
+  // FPS counter
+  frameCount++;
+  if (timestamp - lastFPSUpdate > 500) {
+    fpsDisplay = Math.round(frameCount / ((timestamp - lastFPSUpdate) / 1000));
+    frameCount = 0;
+    lastFPSUpdate = timestamp;
+  }
+
+  // Audio analysis
+  analyzeFrequencyBands();
+  drawFrequencyViz();
+
+  // Update audio time
+  if (state.isPlaying && state.sourceNode) {
+    state.currentTime = state.audioContext.currentTime - state.playStartTime;
+    if (state.currentTime >= state.duration) {
+      stopAudio();
+    }
+    updateTimeDisplay();
+  }
+
+  // Compute physics-audio mapping
+  const bassRaw = freqBands.bass * state.config.bassIntensity;
+  const harmonyRaw = freqBands.mids * state.config.harmonyIntensity;
+  const melodyRaw = freqBands.highs * state.config.melodyIntensity;
+  const drumRaw = freqBands.transient * state.config.drumsIntensity;
+
+  // Bass envelope: fast attack, slow decay — makes bass feel PUNCHY
+  bassEnvelope = bassRaw > bassEnvelope
+    ? bassRaw * 0.7 + bassEnvelope * 0.3
+    : bassRaw * 0.08 + bassEnvelope * 0.92;
+
+  // Sun always animates
+  sun.material.uniforms.uTime.value = elapsedTime;
+
+  if (simulationRunning) {
+    // ─── BASS → SUN MASS + DRAMATIC PULSE ───
+    const dynamicSunMass = sunMass * (1 + bassEnvelope * 4);
+    const sunScale = 1 + bassEnvelope * 2.5;
+    sun.material.uniforms.uBass.value = bassEnvelope;
+    sun.material.uniforms.uScale.value = sunScale;
+    sunGlow.scale.setScalar(30 + bassEnvelope * 100);
+    sunGlow.material.opacity = 0.3 + bassEnvelope * 0.7;
+    sunLight.intensity = 2 + bassEnvelope * 10;
+
+    // Sun color flash toward white on strong bass
+    if (bassEnvelope > 0.3) {
+      const flash = (bassEnvelope - 0.3) * 1.4;
+      const baseCol = new THREE.Color(state.config.colors.sun);
+      baseCol.lerp(new THREE.Color(1, 1, 1), flash * 0.5);
+      sunGlow.material.color.copy(baseCol);
+      sunLight.color.copy(baseCol);
+    } else {
+      sunGlow.material.color.set(state.config.colors.sun);
+      sunLight.color.set(state.config.colors.sun);
+    }
+
+    // ─── HARMONY → GRAVITY MODULATION ───
+    const gravityMod = 1 + harmonyRaw * 2.0;
+
+    // ─── DRUMS → SHOCKWAVE + CAMERA SHAKE + PLANET KICKS ───
+    if (drumRaw > 0.15) {
+      createGravWave(drumRaw);
+      cameraShakeIntensity = Math.max(cameraShakeIntensity, drumRaw * 18);
+
+      // Burst particles from sun
+      emitBurst(drumRaw);
+
+      // Kick every planet — tangential + outward radial impulse
+      planets.forEach(p => {
+        const tangent = new THREE.Vector3(-p.pos.z, 0, p.pos.x).normalize();
+        p.vel.add(tangent.multiplyScalar((Math.random() - 0.3) * drumRaw * 1.8));
+        const radial = p.pos.clone().normalize();
+        p.vel.add(radial.multiplyScalar(drumRaw * 1.2));
+      });
+    }
+    glitchIntensity = drumRaw;
+
+    // Camera shake decay
+    cameraShakeIntensity *= 0.85;
+
+    // ─── MELODY → PLANET GLOW + PARTICLE TRAILS ───
+    const totalEnergy = bassEnvelope + harmonyRaw + melodyRaw;
+    planets.forEach(p => {
+      p.mesh.material.uniforms.uEmissive.value = 0.15 + melodyRaw * 3.0;
+      p.mesh.material.uniforms.uTime.value = elapsedTime;
+
+      // Trail brightness reacts to total energy
+      p.trailMat.uniforms.uBrightness.value = 0.6 + totalEnergy * 2.5;
+
+      // Emit particles from planets on melody peaks
+      if (melodyRaw > 0.2) {
+        emitParticles(melodyRaw, p.pos);
+      }
+    });
+
+    // ─── PHYSICS ───
+    const physDt = 0.16 * state.config.timeScale;
+    const subSteps = 3;
+    for (let s = 0; s < subSteps; s++) {
+      computeAccelerations(planets, dynamicSunMass, gravityMod);
+      velocityVerletStep(physDt / subSteps, dynamicSunMass, gravityMod);
+    }
+
+    // Gentle velocity damping — prevents runaway after many drum kicks
+    planets.forEach(p => { p.vel.multiplyScalar(0.9997); });
+
+    // Update particles + wave rings
+    updateParticles(dt);
+    updateWaveRings();
+
+    // Background flash on big drum hits
+    if (drumRaw > 0.4) {
+      const bgBase = new THREE.Color(state.config.colors.bg);
+      const bright = new THREE.Color(state.config.colors.sun);
+      bgBase.lerp(bright, drumRaw * 0.15);
+      scene.background = bgBase;
+    } else {
+      scene.background = new THREE.Color(state.config.colors.bg);
+    }
+  } else {
+    sun.material.uniforms.uBass.value = 0;
+    sun.material.uniforms.uScale.value = 1;
+    sunGlow.scale.setScalar(40);
+    sunGlow.material.opacity = 0.4;
+    sunLight.intensity = 2;
+    cameraShakeIntensity = 0;
+  }
+
+  // Starfield always animates
+  if (starField) {
+    starField.material.uniforms.uTime.value = elapsedTime;
+    starField.rotation.y = elapsedTime * 0.005;
+  }
+
+  // Camera
+  updateCamera();
+
+  // Render
+  renderer.render(scene, camera);
+
+  // Update stats
+  if (state.isPreviewing) {
+    document.getElementById('stat-fps').textContent = fpsDisplay;
+    document.getElementById('stat-bodies').textContent = planets.length + 1;
+    document.getElementById('stat-energy').textContent = (bassEnvelope + harmonyRaw + melodyRaw).toFixed(2);
+    document.getElementById('stat-bass').textContent = bassEnvelope.toFixed(2);
+  }
+}
+
+// ─── AUDIO PLAYBACK ───
+function playAudio() {
+  if (!state.audioBuffer) return;
+  initAudioContext();
+
+  if (state.sourceNode) {
+    state.sourceNode.stop();
+    state.sourceNode.disconnect();
+  }
+
+  state.sourceNode = state.audioContext.createBufferSource();
+  state.sourceNode.buffer = state.audioBuffer;
+
+  state.analyser = state.audioContext.createAnalyser();
+  state.analyser.fftSize = 2048;
+  state.analyser.smoothingTimeConstant = 0.8;
+
+  state.gainNode = state.audioContext.createGain();
+  state.gainNode.gain.value = parseFloat(document.getElementById('volume-slider').value);
+
+  state.sourceNode.connect(state.analyser);
+  state.analyser.connect(state.gainNode);
+  state.gainNode.connect(state.audioContext.destination);
+
+  state.sourceNode.start(0, state.currentTime);
+  state.playStartTime = state.audioContext.currentTime - state.currentTime;
+  state.isPlaying = true;
+
+  document.getElementById('btn-play').innerHTML = '&#9646;&#9646;';
+  document.getElementById('dot-audio').classList.add('active');
+  document.getElementById('status-audio').textContent = 'Playing';
+}
+
+function pauseAudio() {
+  if (state.sourceNode) {
+    state.currentTime = state.audioContext.currentTime - state.playStartTime;
+    state.sourceNode.stop();
+    state.sourceNode.disconnect();
+    state.sourceNode = null;
+  }
+  state.isPlaying = false;
+  document.getElementById('btn-play').innerHTML = '&#9654;';
+  document.getElementById('status-audio').textContent = 'Paused';
+}
+
+function stopAudio() {
+  pauseAudio();
+  state.currentTime = 0;
+  document.getElementById('dot-audio').classList.remove('active');
+  document.getElementById('status-audio').textContent = 'Stopped';
+  updateTimeDisplay();
+}
+
+function updateTimeDisplay() {
+  const cur = formatTime(state.currentTime);
+  const dur = formatTime(state.duration);
+  document.getElementById('time-display').textContent = `${cur} / ${dur}`;
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+// ─── FILE HANDLING ───
+async function handleFile(file) {
+  if (!file) return;
+  state.audioFile = file;
+
+  initAudioContext();
+
+  const arrayBuffer = await file.arrayBuffer();
+  state.audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+  state.duration = state.audioBuffer.duration;
+  state.currentTime = 0;
+
+  // Update UI
+  const zone = document.getElementById('upload-zone');
+  zone.classList.add('has-file');
+  zone.innerHTML = `
+    <div class="file-info">
+      <div class="file-icon">&#9835;</div>
+      <div class="file-details">
+        <span class="file-name">${file.name}</span>
+        <span class="file-meta">${(file.size / (1024 * 1024)).toFixed(1)} MB &middot; ${formatTime(state.duration)}</span>
+      </div>
+      <button class="file-remove" id="btn-remove-file">&times;</button>
+    </div>
+  `;
+
+  document.getElementById('btn-remove-file').addEventListener('click', e => {
+    e.stopPropagation();
+    removeFile();
+  });
+
+  // BPM detection
+  document.getElementById('bpm-value').textContent = '...';
+  const bpm = await detectBPM(state.audioBuffer);
+  state.bpm = bpm;
+  document.getElementById('bpm-value').textContent = bpm;
+  document.getElementById('duration-value').textContent = formatTime(state.duration);
+
+  document.getElementById('analysis-section').style.display = 'block';
+  document.getElementById('btn-next-1').disabled = false;
+  document.getElementById('dot-audio').classList.add('active');
+  document.getElementById('status-audio').textContent = 'Loaded';
+}
+
+function removeFile() {
+  stopAudio();
+  state.audioFile = null;
+  state.audioBuffer = null;
+  state.analyser = null;
+
+  const zone = document.getElementById('upload-zone');
+  zone.classList.remove('has-file');
+  zone.innerHTML = `
+    <span class="upload-icon">&#9835;</span>
+    <h3>Drop your audio file here</h3>
+    <p>.mp3 &middot; .wav &middot; .m4a</p>
+  `;
+  document.getElementById('analysis-section').style.display = 'none';
+  document.getElementById('btn-next-1').disabled = true;
+  document.getElementById('dot-audio').classList.remove('active');
+  document.getElementById('status-audio').textContent = 'No audio';
+}
+
+// ─── FRAME-BY-FRAME RENDER (WebCodecs / Canvas Capture) ───
+async function renderToMP4() {
+  if (!state.audioBuffer) return;
+  state.isRendering = true;
+  simulationRunning = true;
+
+  const resStr = document.getElementById('render-res').value;
+  const [width, height] = resStr.split('x').map(Number);
+  const fps = parseInt(document.getElementById('render-fps').value);
+  const totalFrames = Math.ceil(state.duration * fps);
+
+  const progressBar = document.getElementById('render-progress');
+  const progressFill = document.getElementById('render-fill');
+  const renderStatus = document.getElementById('render-status');
+  const btnRender = document.getElementById('btn-render');
+  const btnDownload = document.getElementById('btn-download');
+
+  progressBar.classList.add('active');
+  renderStatus.classList.add('active');
+  btnRender.disabled = true;
+  btnDownload.style.display = 'none';
+
+  document.getElementById('dot-render').classList.add('recording');
+  document.getElementById('status-render').textContent = 'Rendering...';
+
+  // Create offscreen renderer
+  const offCanvas = document.createElement('canvas');
+  offCanvas.width = width;
+  offCanvas.height = height;
+  const offRenderer = new THREE.WebGLRenderer({ canvas: offCanvas, antialias: true });
+  offRenderer.setSize(width, height);
+  offRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+  offRenderer.toneMappingExposure = 1.2;
+
+  const offCamera = camera.clone();
+  offCamera.aspect = width / height;
+  offCamera.updateProjectionMatrix();
+
+  // Offline audio analysis
+  const offlineCtx = new OfflineAudioContext(
+    state.audioBuffer.numberOfChannels,
+    state.audioBuffer.length,
+    state.audioBuffer.sampleRate
+  );
+  const offlineSource = offlineCtx.createBufferSource();
+  offlineSource.buffer = state.audioBuffer;
+  offlineSource.connect(offlineCtx.destination);
+  offlineSource.start();
+
+  renderStatus.textContent = 'Analyzing audio offline...';
+  const renderedAudioBuffer = await offlineCtx.startRendering();
+  const audioData = renderedAudioBuffer.getChannelData(0);
+
+  // Capture frames as blobs
+  const frameBlobs = [];
+  const samplesPerFrame = Math.floor(renderedAudioBuffer.sampleRate / fps);
+
+  // Reset simulation for render
+  createPlanets(state.config.planetCount);
+  applyColors();
+  let renderTime = 0;
+  let renderBassEnv = 0;
+  let renderPrevEnergy = 0;
+
+  renderStatus.textContent = 'Capturing frames...';
+
+  for (let frame = 0; frame < totalFrames; frame++) {
+    // Extract audio features for this frame
+    const sampleStart = frame * samplesPerFrame;
+    const sampleEnd = Math.min(sampleStart + samplesPerFrame, audioData.length);
+    let energy = 0;
+    let highEnergy = 0;
+    for (let s = sampleStart; s < sampleEnd; s++) {
+      energy += audioData[s] * audioData[s];
+    }
+    energy = Math.sqrt(energy / Math.max(1, sampleEnd - sampleStart));
+
+    // Derive frequency bands from energy + rate of change
+    const bassEst = Math.min(energy * 2.0, 1.0);
+    const midsEst = Math.min(energy * 1.2, 1.0);
+    const highsEst = Math.min(energy * 0.8, 1.0);
+    const transientEst = Math.min(Math.max(0, energy - renderPrevEnergy) * 5, 1.0);
+    renderPrevEnergy = energy * 0.7 + renderPrevEnergy * 0.3;
+
+    const bassRaw = bassEst * state.config.bassIntensity;
+    const harmonyRaw = midsEst * state.config.harmonyIntensity;
+    const melodyRaw = highsEst * state.config.melodyIntensity;
+    const drumRaw = transientEst * state.config.drumsIntensity;
+
+    // Bass envelope
+    renderBassEnv = bassRaw > renderBassEnv
+      ? bassRaw * 0.7 + renderBassEnv * 0.3
+      : bassRaw * 0.08 + renderBassEnv * 0.92;
+
+    renderTime += 1 / fps;
+
+    // ─── Apply same dramatic mappings as live preview ───
+    const dynamicSunMass = sunMass * (1 + renderBassEnv * 4);
+    const sunScale = 1 + renderBassEnv * 2.5;
+    sun.material.uniforms.uBass.value = renderBassEnv;
+    sun.material.uniforms.uScale.value = sunScale;
+    sun.material.uniforms.uTime.value = renderTime;
+    sunGlow.scale.setScalar(30 + renderBassEnv * 100);
+    sunGlow.material.opacity = 0.3 + renderBassEnv * 0.7;
+    sunLight.intensity = 2 + renderBassEnv * 10;
+
+    // Sun flash
+    if (renderBassEnv > 0.3) {
+      const flash = (renderBassEnv - 0.3) * 1.4;
+      const baseCol = new THREE.Color(state.config.colors.sun);
+      baseCol.lerp(new THREE.Color(1, 1, 1), flash * 0.5);
+      sunGlow.material.color.copy(baseCol);
+      sunLight.color.copy(baseCol);
+    } else {
+      sunGlow.material.color.set(state.config.colors.sun);
+      sunLight.color.set(state.config.colors.sun);
+    }
+
+    const gravityMod = 1 + harmonyRaw * 2.0;
+
+    // Drum shockwaves + planet kicks
+    if (drumRaw > 0.15) {
+      createGravWave(drumRaw);
+      emitBurst(drumRaw);
+      planets.forEach(p => {
+        const tangent = new THREE.Vector3(-p.pos.z, 0, p.pos.x).normalize();
+        p.vel.add(tangent.multiplyScalar((Math.random() - 0.3) * drumRaw * 1.8));
+        const radial = p.pos.clone().normalize();
+        p.vel.add(radial.multiplyScalar(drumRaw * 1.2));
+      });
+    }
+
+    // Melody + energy effects
+    const totalEnergy = renderBassEnv + harmonyRaw + melodyRaw;
+    planets.forEach(p => {
+      p.mesh.material.uniforms.uEmissive.value = 0.15 + melodyRaw * 3.0;
+      p.mesh.material.uniforms.uTime.value = renderTime;
+      p.trailMat.uniforms.uBrightness.value = 0.6 + totalEnergy * 2.5;
+      if (melodyRaw > 0.2) emitParticles(melodyRaw, p.pos);
+    });
+
+    // Background flash
+    if (drumRaw > 0.4) {
+      const bgBase = new THREE.Color(state.config.colors.bg);
+      bgBase.lerp(new THREE.Color(state.config.colors.sun), drumRaw * 0.15);
+      scene.background = bgBase;
+    } else {
+      scene.background = new THREE.Color(state.config.colors.bg);
+    }
+
+    // Physics
+    const physDt = 0.16 * state.config.timeScale;
+    const subSteps = 3;
+    for (let s = 0; s < subSteps; s++) {
+      computeAccelerations(planets, dynamicSunMass, gravityMod);
+      velocityVerletStep(physDt / subSteps, dynamicSunMass, gravityMod);
+    }
+    planets.forEach(p => { p.vel.multiplyScalar(0.9997); });
+    updateParticles(1 / fps);
+    updateWaveRings();
+
+    if (starField) {
+      starField.material.uniforms.uTime.value = renderTime;
+      starField.rotation.y = renderTime * 0.005;
+    }
+
+    // Camera orbit during render
+    const renderAngle = (frame / totalFrames) * Math.PI * 0.5 + cameraAngle;
+    offCamera.position.set(
+      Math.sin(renderAngle) * Math.cos(cameraElevation) * cameraDistance,
+      Math.sin(cameraElevation) * cameraDistance * 0.5 + 30,
+      Math.cos(renderAngle) * Math.cos(cameraElevation) * cameraDistance
+    );
+    offCamera.lookAt(0, 0, 0);
+
+    offRenderer.render(scene, offCamera);
+
+    // Capture frame
+    const blob = await new Promise(r => offCanvas.toBlob(r, 'image/jpeg', 0.92));
+    frameBlobs.push(blob);
+
+    // Update progress
+    const progress = ((frame + 1) / totalFrames) * 50;
+    progressFill.style.width = progress + '%';
+    renderStatus.textContent = `Frame ${frame + 1} / ${totalFrames} (${Math.round(progress)}%)`;
+
+    // Yield to keep UI responsive
+    if (frame % 4 === 0) {
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  renderStatus.textContent = 'Encoding video with audio...';
+
+  try {
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = width;
+    outputCanvas.height = height;
+    const outputCtx = outputCanvas.getContext('2d');
+
+    // Set up audio track for the output
+    const encodeAudioCtx = new AudioContext();
+    const encodeSource = encodeAudioCtx.createBufferSource();
+    encodeSource.buffer = state.audioBuffer;
+    const audioDest = encodeAudioCtx.createMediaStreamDestination();
+    encodeSource.connect(audioDest);
+    // Also connect to speakers so user hears during encode
+    encodeSource.connect(encodeAudioCtx.destination);
+
+    // Combine video + audio tracks
+    const videoStream = outputCanvas.captureStream(fps);
+    const combinedStream = new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...audioDest.stream.getAudioTracks()
+    ]);
+
+    // Pick best supported codec
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+      ? 'video/webm;codecs=vp9,opus'
+      : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+        ? 'video/webm;codecs=vp8,opus'
+        : 'video/webm';
+
+    const mediaRecorder = new MediaRecorder(combinedStream, {
+      mimeType,
+      videoBitsPerSecond: width > 2000 ? 20000000 : 10000000
+    });
+
+    const chunks = [];
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+    const encodingDone = new Promise(resolve => {
+      mediaRecorder.onstop = () => resolve();
+    });
+
+    // Start audio and recorder simultaneously
+    mediaRecorder.start();
+    encodeSource.start();
+
+    // Draw frames at real-time speed so audio stays in sync
+    for (let i = 0; i < frameBlobs.length; i++) {
+      const img = await createImageBitmap(frameBlobs[i]);
+      outputCtx.drawImage(img, 0, 0);
+      img.close();
+
+      const progress = 50 + ((i + 1) / frameBlobs.length) * 50;
+      progressFill.style.width = progress + '%';
+      renderStatus.textContent = `Encoding ${i + 1} / ${frameBlobs.length} (with audio)`;
+
+      await new Promise(r => setTimeout(r, 1000 / fps));
+    }
+
+    mediaRecorder.stop();
+    try { encodeSource.stop(); } catch(e) {}
+    await encodingDone;
+    encodeAudioCtx.close();
+
+    const videoBlob = new Blob(chunks, { type: 'video/webm' });
+    const url = URL.createObjectURL(videoBlob);
+
+    btnDownload.style.display = 'block';
+    btnDownload.onclick = () => {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'orchestral-orbits.webm';
+      a.click();
+    };
+
+    renderStatus.textContent = 'Render complete! Video with audio ready.';
+  } catch (err) {
+    renderStatus.textContent = 'Encoding failed: ' + err.message;
+    console.error('Encoding error:', err);
+
+    btnDownload.style.display = 'block';
+    btnDownload.textContent = 'Download Frame Sequence';
+    btnDownload.onclick = () => {
+      frameBlobs.forEach((blob, i) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `frame_${String(i).padStart(5, '0')}.jpg`;
+        a.click();
+      });
+    };
+  }
+
+  offRenderer.dispose();
+  state.isRendering = false;
+  simulationRunning = state.isPreviewing;
+  btnRender.disabled = false;
+  document.getElementById('dot-render').classList.remove('recording');
+  document.getElementById('status-render').textContent = 'Complete';
+
+  // Recreate planets for live view
+  createPlanets(state.config.planetCount);
+  applyColors();
+}
+
+// ─── UI EVENT BINDINGS ───
+function initUI() {
+  // Upload zone
+  const zone = document.getElementById('upload-zone');
+  const fileInput = document.getElementById('file-input');
+
+  zone.addEventListener('click', () => {
+    if (!zone.classList.contains('has-file')) fileInput.click();
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => { zone.classList.remove('dragover'); });
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+
+  // Sidebar toggle
+  document.getElementById('sidebar-toggle').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+  });
+
+  // Step navigation
+  document.querySelectorAll('.step-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const step = parseInt(tab.dataset.step);
+      goToStep(step);
+    });
+  });
+
+  // Next buttons
+  document.getElementById('btn-next-1').addEventListener('click', () => goToStep(2));
+  document.getElementById('btn-next-2').addEventListener('click', () => goToStep(3));
+  document.getElementById('btn-next-3').addEventListener('click', () => goToStep(4));
+  document.getElementById('btn-next-4').addEventListener('click', () => goToStep(5));
+
+  // Play controls
+  document.getElementById('btn-play').addEventListener('click', () => {
+    if (state.isPlaying) pauseAudio();
+    else playAudio();
+  });
+
+  document.getElementById('volume-slider').addEventListener('input', e => {
+    if (state.gainNode) state.gainNode.gain.value = parseFloat(e.target.value);
+  });
+
+  // Sliders
+  bindSlider('bass-intensity', 'bass-intensity-val', v => {
+    state.config.bassIntensity = v / 100;
+    return Math.round(v) + '%';
+  });
+  bindSlider('harmony-intensity', 'harmony-intensity-val', v => {
+    state.config.harmonyIntensity = v / 100;
+    return Math.round(v) + '%';
+  });
+  bindSlider('melody-intensity', 'melody-intensity-val', v => {
+    state.config.melodyIntensity = v / 100;
+    return Math.round(v) + '%';
+  });
+  bindSlider('drums-intensity', 'drums-intensity-val', v => {
+    state.config.drumsIntensity = v / 100;
+    return Math.round(v) + '%';
+  });
+  bindSlider('planet-count', 'planet-count-val', v => {
+    const count = Math.round(v);
+    state.config.planetCount = count;
+    createPlanets(count);
+    applyColors();
+    return count;
+  });
+  bindSlider('time-scale', 'time-scale-val', v => {
+    state.config.timeScale = parseFloat(v);
+    return parseFloat(v).toFixed(1) + 'x';
+  });
+  bindSlider('trail-length', 'trail-length-val', v => {
+    state.config.trailLength = Math.round(v);
+    planets.forEach(p => p.trailMax = Math.round(v));
+    return Math.round(v);
+  });
+  bindSlider('bloom-intensity', 'bloom-val', v => {
+    state.config.bloomIntensity = parseFloat(v);
+    return parseFloat(v).toFixed(1);
+  });
+  bindSlider('star-density', 'star-density-val', v => {
+    const count = Math.round(v);
+    state.config.starDensity = count;
+    createStarfield(count);
+    return count;
+  });
+
+  // Theme presets
+  document.querySelectorAll('.theme-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.theme-preset').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyTheme(btn.dataset.theme);
+    });
+  });
+
+  // Color pickers
+  ['sun', 'planet', 'trail', 'bg'].forEach(key => {
+    const picker = document.getElementById('color-' + key);
+    const hex = document.querySelector(`.color-hex[data-for="color-${key}"]`);
+
+    picker.addEventListener('input', () => {
+      state.config.colors[key] = picker.value;
+      hex.value = picker.value;
+      picker.parentElement.style.background = picker.value;
+      applyColors();
+    });
+
+    hex.addEventListener('change', () => {
+      if (/^#[0-9A-Fa-f]{6}$/.test(hex.value)) {
+        picker.value = hex.value;
+        state.config.colors[key] = hex.value;
+        picker.parentElement.style.background = hex.value;
+        applyColors();
+      }
+    });
+  });
+
+  // Preview controls
+  document.getElementById('btn-start-preview').addEventListener('click', () => {
+    state.isPreviewing = true;
+    simulationRunning = true;
+    // Reset planets for clean initial orbits
+    createPlanets(state.config.planetCount);
+    applyColors();
+    document.getElementById('empty-state').classList.add('hidden');
+    document.getElementById('play-controls').classList.add('visible');
+    document.getElementById('btn-start-preview').style.display = 'none';
+    document.getElementById('btn-stop-preview').style.display = 'block';
+    document.getElementById('preview-stats').style.display = 'block';
+    document.getElementById('dot-sim').classList.add('active');
+    document.getElementById('status-sim').textContent = 'Simulating';
+    playAudio();
+  });
+
+  document.getElementById('btn-stop-preview').addEventListener('click', () => {
+    state.isPreviewing = false;
+    simulationRunning = false;
+    stopAudio();
+    document.getElementById('play-controls').classList.remove('visible');
+    document.getElementById('btn-start-preview').style.display = 'block';
+    document.getElementById('btn-stop-preview').style.display = 'none';
+    document.getElementById('preview-stats').style.display = 'none';
+    document.getElementById('dot-sim').classList.remove('active');
+    document.getElementById('status-sim').textContent = 'Idle';
+  });
+
+  // Render
+  document.getElementById('btn-render').addEventListener('click', () => {
+    if (!state.audioBuffer) {
+      alert('Please upload an audio file first.');
+      return;
+    }
+    renderToMP4();
+  });
+
+  // Resize
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+
+function goToStep(step) {
+  state.currentStep = step;
+  document.querySelectorAll('.step-tab').forEach(t => {
+    const s = parseInt(t.dataset.step);
+    t.classList.remove('active');
+    if (s < step) t.classList.add('completed');
+    if (s === step) t.classList.add('active');
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const panelId = document.querySelector(`.step-tab[data-step="${step}"]`).dataset.panel;
+  document.getElementById(panelId).classList.add('active');
+}
+
+function bindSlider(sliderId, displayId, handler) {
+  const slider = document.getElementById(sliderId);
+  slider.addEventListener('input', () => {
+    const val = handler(parseFloat(slider.value));
+    document.getElementById(displayId).textContent = val;
+  });
+}
+
+// ─── INIT ───
+scene.background = new THREE.Color(state.config.colors.bg);
+applyColors();
+initUI();
+animate(0);
+
+})();
+</script>
+</body>
+</html>
