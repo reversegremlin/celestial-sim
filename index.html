@@ -968,6 +968,10 @@ select option { background: var(--deep); }
           <div class="control-label">Time Scale <span class="value" id="time-scale-val">1.0x</span></div>
           <input type="range" id="time-scale" min="0.1" max="3" step="0.1" value="1">
         </div>
+        <div class="control-row">
+          <div class="control-label">Orbit Distance <span class="value" id="orbit-dist-val">1.5x</span></div>
+          <input type="range" id="orbit-dist" min="0.5" max="3" step="0.1" value="1.5">
+        </div>
       </div>
 
       <div class="sidebar-footer">
@@ -1133,11 +1137,62 @@ select option { background: var(--deep); }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
-// ORCHESTRAL ORBITS — Main Application
+// ORCHESTRAL ORBITS — Main Application (Enhanced Visuals)
 // ═══════════════════════════════════════════════════════════════
 
 (() => {
 'use strict';
+
+// ─── NOISE GLSL (Full 3D Simplex Noise) ───
+const NOISE_GLSL = `
+vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+float snoise(vec3 v) {
+  const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+  vec3 i  = floor(v + dot(v, C.yyy));
+  vec3 x0 = v - i + dot(i, C.xxx);
+  vec3 g = step(x0.yzx, x0.xyz);
+  vec3 l = 1.0 - g;
+  vec3 i1 = min(g.xyz, l.zxy);
+  vec3 i2 = max(g.xyz, l.zxy);
+  vec3 x1 = x0 - i1 + C.xxx;
+  vec3 x2 = x0 - i2 + C.yyy;
+  vec3 x3 = x0 - D.yyy;
+  i = mod289(i);
+  vec4 p = permute(permute(permute(
+    i.z + vec4(0.0, i1.z, i2.z, 1.0))
+  + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+  + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+  float n_ = 0.142857142857;
+  vec3 ns = n_ * D.wyz - D.xzx;
+  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+  vec4 x_ = floor(j * ns.z);
+  vec4 y_ = floor(j - 7.0 * x_);
+  vec4 x = x_ * ns.x + ns.yyyy;
+  vec4 y = y_ * ns.x + ns.yyyy;
+  vec4 h = 1.0 - abs(x) - abs(y);
+  vec4 b0 = vec4(x.xy, y.xy);
+  vec4 b1 = vec4(x.zw, y.zw);
+  vec4 s0 = floor(b0)*2.0 + 1.0;
+  vec4 s1 = floor(b1)*2.0 + 1.0;
+  vec4 sh = -step(h, vec4(0.0));
+  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+  vec3 p0 = vec3(a0.xy, h.x);
+  vec3 p1 = vec3(a0.zw, h.y);
+  vec3 p2 = vec3(a1.xy, h.z);
+  vec3 p3 = vec3(a1.zw, h.w);
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+  m = m * m;
+  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+}
+`;
 
 // ─── STATE ───
 const state = {
@@ -1162,6 +1217,7 @@ const state = {
     drumsIntensity: 0.90,
     planetCount: 5,
     timeScale: 1.0,
+    orbitScale: 1.5,
     trailLength: 120,
     bloomIntensity: 0.8,
     starDensity: 2000,
@@ -1246,8 +1302,8 @@ function createStarfield(count) {
 }
 createStarfield(state.config.starDensity);
 
-// ─── SUN ───
-const sunGeom = new THREE.SphereGeometry(5, 64, 64);
+// ─── PROCEDURAL SUN WITH SIMPLEX NOISE ───
+const sunGeom = new THREE.SphereGeometry(6, 128, 128);
 const sunMat = new THREE.ShaderMaterial({
   uniforms: {
     uTime: { value: 0 },
@@ -1256,55 +1312,90 @@ const sunMat = new THREE.ShaderMaterial({
     uScale: { value: 1 }
   },
   vertexShader: `
+    ${NOISE_GLSL}
     uniform float uTime;
     uniform float uBass;
     uniform float uScale;
     varying vec3 vNormal;
     varying vec3 vPosition;
+    varying vec3 vViewDir;
     void main() {
-      vNormal = normal;
+      vNormal = normalize(normalMatrix * normal);
       vPosition = position;
-      float displacement = sin(position.x * 3.0 + uTime * 2.0) *
-                           sin(position.y * 3.0 + uTime * 1.5) *
-                           sin(position.z * 3.0 + uTime) * uBass * 0.8;
-      vec3 newPos = position * uScale + normal * displacement;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos, 1.0);
+      // Subtle surface ripple only — keeps sphere shape
+      float ripple = snoise(position * 0.6 + uTime * 0.3) * 0.12
+                   + snoise(position * 1.5 + uTime * 0.7) * 0.06;
+      ripple *= (1.0 + uBass * 0.8);
+      vec3 newPos = position * uScale + normal * ripple;
+      vec4 worldPos = modelMatrix * vec4(newPos, 1.0);
+      vViewDir = normalize(cameraPosition - worldPos.xyz);
+      gl_Position = projectionMatrix * viewMatrix * worldPos;
     }
   `,
   fragmentShader: `
+    ${NOISE_GLSL}
     uniform vec3 uColor;
     uniform float uTime;
     uniform float uBass;
     varying vec3 vNormal;
     varying vec3 vPosition;
+    varying vec3 vViewDir;
     void main() {
-      float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
-      vec3 glow = uColor * (1.0 + fresnel * 2.0 + uBass * 0.5);
-      float pulse = sin(uTime * 3.0) * 0.1 + 1.0;
-      gl_FragColor = vec4(glow * pulse, 1.0);
+      // Layered turbulence for plasma granulation
+      float t = uTime;
+      float n1 = snoise(vPosition * 1.2 + t * 0.15) * 0.5 + 0.5;
+      float n2 = snoise(vPosition * 2.8 - t * 0.25) * 0.5 + 0.5;
+      float n3 = snoise(vPosition * 5.5 + t * 0.5) * 0.5 + 0.5;
+      float n4 = snoise(vPosition * 10.0 - t * 0.8) * 0.5 + 0.5;
+
+      // Combine: large cells + medium detail + fine grain
+      float plasma = n1 * 0.4 + n2 * 0.3 + n3 * 0.2 + n4 * 0.1;
+
+      // Hot spots — bright granules that flow across surface
+      float hotSpots = smoothstep(0.55, 0.75, n1) * smoothstep(0.4, 0.7, n2);
+
+      // Fresnel rim
+      float fresnel = pow(1.0 - max(dot(vNormal, vViewDir), 0.0), 2.5);
+
+      // Color palette: white-hot core → user color → darker edges
+      vec3 hotWhite = vec3(1.0, 0.97, 0.9);
+      vec3 hotYellow = vec3(1.0, 0.85, 0.5);
+      vec3 midColor = mix(uColor, hotYellow, 0.3);
+      vec3 darkEdge = uColor * 0.5;
+
+      // Base: plasma turbulence drives color temperature
+      vec3 col = mix(darkEdge, midColor, plasma);
+      col = mix(col, hotWhite, hotSpots * 0.7);
+
+      // Core glow — center of the sun is brighter/whiter
+      float coreFactor = 1.0 - fresnel;
+      col = mix(col, mix(hotYellow, hotWhite, coreFactor * 0.5), coreFactor * 0.35);
+
+      // Limb darkening on edges
+      col = mix(col * 0.4, col, smoothstep(0.0, 0.4, 1.0 - fresnel));
+
+      // Rim corona glow
+      col += uColor * fresnel * 0.8;
+
+      // Fine grain shimmer — fast subtle flicker
+      float shimmer = snoise(vPosition * 20.0 + t * 2.0) * 0.08;
+      col += hotWhite * shimmer;
+
+      // Bass reactivity: brightens + pushes toward white
+      col *= 1.0 + uBass * 0.6;
+      col = mix(col, hotWhite, uBass * 0.25);
+
+      // HDR clamp
+      col = min(col, vec3(2.5));
+
+      gl_FragColor = vec4(col, 1.0);
     }
   `
 });
 const sun = new THREE.Mesh(sunGeom, sunMat);
 scene.add(sun);
 
-// Sun glow sprite
-const glowTexture = createGlowTexture();
-const glowMat = new THREE.SpriteMaterial({
-  map: glowTexture,
-  color: new THREE.Color(state.config.colors.sun),
-  transparent: true,
-  blending: THREE.AdditiveBlending,
-  opacity: 0.6
-});
-const sunGlow = new THREE.Sprite(glowMat);
-sunGlow.scale.set(40, 40, 1);
-scene.add(sunGlow);
-
-// Point light at sun
-const sunLight = new THREE.PointLight(new THREE.Color(state.config.colors.sun), 2, 500);
-scene.add(sunLight);
-
+// Sun glow textures
 function createGlowTexture() {
   const size = 256;
   const c = document.createElement('canvas');
@@ -1317,31 +1408,107 @@ function createGlowTexture() {
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(c);
-  return tex;
+  return new THREE.CanvasTexture(c);
 }
+
+const glowTexture = createGlowTexture();
+
+// Inner bright glow
+const innerGlowMat = new THREE.SpriteMaterial({
+  map: glowTexture,
+  color: new THREE.Color(state.config.colors.sun),
+  transparent: true,
+  depthWrite: false,
+  depthTest: false,
+  blending: THREE.AdditiveBlending,
+  opacity: 0.7
+});
+const sunGlowInner = new THREE.Sprite(innerGlowMat);
+sunGlowInner.scale.set(40, 40, 1);
+sunGlowInner.renderOrder = 999;
+scene.add(sunGlowInner);
+
+// Outer dim corona
+const outerGlowMat = new THREE.SpriteMaterial({
+  map: glowTexture,
+  color: new THREE.Color(state.config.colors.sun),
+  transparent: true,
+  depthWrite: false,
+  depthTest: false,
+  blending: THREE.AdditiveBlending,
+  opacity: 0.25
+});
+const sunGlowOuter = new THREE.Sprite(outerGlowMat);
+sunGlowOuter.scale.set(80, 80, 1);
+sunGlowOuter.renderOrder = 998;
+scene.add(sunGlowOuter);
+
+// Backward compat alias
+const sunGlow = sunGlowInner;
+
+// Point light at sun
+const sunLight = new THREE.PointLight(new THREE.Color(state.config.colors.sun), 2, 500);
+scene.add(sunLight);
+
+// Sun spring physics state
+let sunSnapScale = 0;
+let sunBouncePhase = 0;
+let sunBounceAmp = 0;
 
 // ─── PHYSICS CONSTANTS (must be before CelestialBody) ───
 const G = 3;
 const sunMass = 80;
 const SOFTENING = 4;
 
+// ─── HSL HELPER ───
+function hexToHSL(hex) {
+  let r = parseInt(hex.slice(1,3),16)/255;
+  let g = parseInt(hex.slice(3,5),16)/255;
+  let b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h, s, l = (max+min)/2;
+  if (max === min) { h = s = 0; }
+  else {
+    const d = max - min;
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+    if (max === r) h = ((g-b)/d + (g<b?6:0))/6;
+    else if (max === g) h = ((b-r)/d+2)/6;
+    else h = ((r-g)/d+4)/6;
+  }
+  return [h,s,l];
+}
+function hslToHex(h,s,l) {
+  let r,g,b;
+  if (s === 0) { r=g=b=l; }
+  else {
+    const hue2rgb = (p,q,t) => { if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
+    const q = l<0.5 ? l*(1+s) : l+s-l*s;
+    const p = 2*l-q;
+    r = hue2rgb(p,q,h+1/3); g = hue2rgb(p,q,h); b = hue2rgb(p,q,h-1/3);
+  }
+  const toHex = x => { const hex = Math.round(x*255).toString(16); return hex.length===1?'0'+hex:hex; };
+  return '#'+toHex(r)+toHex(g)+toHex(b);
+}
+function getPlanetColor(baseHex, index) {
+  const [h,s,l] = hexToHSL(baseHex);
+  const newH = (h + index * 0.13) % 1.0;
+  return hslToHex(newH, Math.min(s*1.1, 1.0), l);
+}
+
 // ─── PLANETS (N-Body) ───
 let planets = [];
-let trailGeometries = [];
 let simulationRunning = false;
 
 class CelestialBody {
   constructor(index, total) {
     this.index = index;
     const angle = (index / total) * Math.PI * 2;
-    const radius = 30 + index * 15;
+    const radius = (30 + index * 15) * state.config.orbitScale;
     this.pos = new THREE.Vector3(
       Math.cos(angle) * radius,
       (Math.random() - 0.5) * 4,
       Math.sin(angle) * radius
     );
-    // Correct circular orbit velocity: v = sqrt(G * M * r / (r^2 + softening^2))
     const speed = Math.sqrt(G * sunMass * radius / (radius * radius + SOFTENING * SOFTENING));
     this.vel = new THREE.Vector3(
       -Math.sin(angle) * speed,
@@ -1352,35 +1519,54 @@ class CelestialBody {
     this.mass = 0.5 + Math.random() * 1.5;
     this.baseRadius = 1.5 + Math.random() * 2;
 
-    // Mesh
-    const geom = new THREE.SphereGeometry(this.baseRadius, 32, 32);
+    // Unique color per planet
+    this.uniqueColor = getPlanetColor(state.config.colors.planet, index);
+    const planetCol = new THREE.Color(this.uniqueColor);
+
+    // High-poly mesh with noise displacement + Blinn-Phong
+    const geom = new THREE.SphereGeometry(this.baseRadius, 48, 48);
     const mat = new THREE.ShaderMaterial({
       uniforms: {
-        uColor: { value: new THREE.Color(state.config.colors.planet) },
+        uColor: { value: planetCol.clone() },
         uEmissive: { value: 0.5 },
-        uTime: { value: 0 }
+        uTime: { value: 0 },
+        uIntensity: { value: 0.0 }
       },
       vertexShader: `
+        ${NOISE_GLSL}
+        uniform float uTime;
         varying vec3 vNormal;
         varying vec3 vWorldPos;
+        varying float vNoise;
         void main() {
+          float n = snoise(position * 0.8 + uTime * 0.1) * 0.15;
+          vec3 displaced = position + normal * n;
+          vNoise = n;
           vNormal = normalize(normalMatrix * normal);
-          vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          vWorldPos = (modelMatrix * vec4(displaced, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
         }
       `,
       fragmentShader: `
         uniform vec3 uColor;
         uniform float uEmissive;
         uniform float uTime;
+        uniform float uIntensity;
         varying vec3 vNormal;
         varying vec3 vWorldPos;
+        varying float vNoise;
         void main() {
           vec3 lightDir = normalize(-vWorldPos);
+          vec3 viewDir = normalize(cameraPosition - vWorldPos);
+          vec3 halfDir = normalize(lightDir + viewDir);
           float diff = max(dot(vNormal, lightDir), 0.0);
-          vec3 col = uColor * (0.3 + diff * 0.5 + uEmissive * 0.4);
-          float rim = pow(1.0 - abs(dot(vNormal, lightDir)), 3.0);
-          col += uColor * rim * 0.5;
+          float spec = pow(max(dot(vNormal, halfDir), 0.0), 32.0);
+          float ambient = 0.15;
+          vec3 surfaceColor = uColor * (0.85 + vNoise * 1.0);
+          vec3 col = surfaceColor * (ambient + diff * 0.6) + vec3(1.0) * spec * 0.3;
+          col += surfaceColor * uEmissive * 0.4;
+          float rim = pow(1.0 - abs(dot(vNormal, viewDir)), 3.0);
+          col += uColor * rim * (0.5 + uIntensity * 1.5);
           gl_FragColor = vec4(col, 1.0);
         }
       `
@@ -1389,7 +1575,79 @@ class CelestialBody {
     this.mesh.position.copy(this.pos);
     scene.add(this.mesh);
 
-    // Trail
+    // Atmosphere shell (1.3x radius, BackSide, additive, rim-only)
+    const atmosGeom = new THREE.SphereGeometry(this.baseRadius * 1.3, 32, 32);
+    const atmosMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: planetCol.clone() },
+        uIntensity: { value: 0.0 }
+      },
+      vertexShader: `
+        varying vec3 vNormal;
+        varying vec3 vWorldPos;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vWorldPos = (modelMatrix * vec4(position,1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uIntensity;
+        varying vec3 vNormal;
+        varying vec3 vWorldPos;
+        void main() {
+          vec3 viewDir = normalize(cameraPosition - vWorldPos);
+          float rim = pow(1.0 - abs(dot(vNormal, viewDir)), 3.0);
+          float alpha = rim * (0.3 + uIntensity * 0.7);
+          gl_FragColor = vec4(uColor * (1.0 + uIntensity), alpha);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending
+    });
+    this.atmosphere = new THREE.Mesh(atmosGeom, atmosMat);
+    this.atmosphere.position.copy(this.pos);
+    scene.add(this.atmosphere);
+
+    // Per-planet glow sprite
+    this.glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture,
+      color: planetCol.clone(),
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+      opacity: 0.3
+    }));
+    this.glowSprite.scale.set(this.baseRadius * 4, this.baseRadius * 4, 1);
+    this.glowSprite.position.copy(this.pos);
+    scene.add(this.glowSprite);
+
+    // Moons (1-2 per planet)
+    this.moons = [];
+    const moonCount = 1 + Math.floor(Math.random() * 2);
+    for (let m = 0; m < moonCount; m++) {
+      const moonRadius = 0.3 + Math.random() * 0.3;
+      const moonGeom = new THREE.SphereGeometry(moonRadius, 16, 16);
+      const dimColor = planetCol.clone().multiplyScalar(0.6);
+      const moonMat = new THREE.MeshBasicMaterial({ color: dimColor });
+      const moonMesh = new THREE.Mesh(moonGeom, moonMat);
+      const moonData = {
+        mesh: moonMesh,
+        angle: Math.random() * Math.PI * 2,
+        speed: 1.5 + Math.random() * 2.0,
+        dist: this.baseRadius * 2.0 + m * 1.5 + Math.random() * 1.0,
+        radius: moonRadius
+      };
+      moonMesh.position.copy(this.pos);
+      scene.add(moonMesh);
+      this.moons.push(moonData);
+    }
+
+    // Trail (THREE.Line with shader)
     this.trailMax = state.config.trailLength;
     this.trail = [];
     this.trailGeom = new THREE.BufferGeometry();
@@ -1401,7 +1659,7 @@ class CelestialBody {
 
     this.trailMat = new THREE.ShaderMaterial({
       uniforms: {
-        uColor: { value: new THREE.Color(state.config.colors.trail) },
+        uColor: { value: new THREE.Color(this.uniqueColor) },
         uBrightness: { value: 1.0 }
       },
       vertexShader: `
@@ -1412,7 +1670,6 @@ class CelestialBody {
           vAlpha = alpha;
           vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mvPos;
-          gl_PointSize = 2.0;
         }
       `,
       fragmentShader: `
@@ -1420,7 +1677,7 @@ class CelestialBody {
         uniform float uBrightness;
         varying float vAlpha;
         void main() {
-          float a = vAlpha * 0.8 * uBrightness;
+          float a = vAlpha * uBrightness;
           vec3 col = uColor * uBrightness;
           gl_FragColor = vec4(col, a);
         }
@@ -1451,13 +1708,35 @@ class CelestialBody {
     this.trailGeom.setDrawRange(0, this.trail.length);
   }
 
+  updateMoons(dt) {
+    for (const moon of this.moons) {
+      moon.angle += moon.speed * dt;
+      moon.mesh.position.set(
+        this.pos.x + Math.cos(moon.angle) * moon.dist,
+        this.pos.y + Math.sin(moon.angle * 0.7) * moon.dist * 0.3,
+        this.pos.z + Math.sin(moon.angle) * moon.dist
+      );
+    }
+  }
+
   destroy() {
     scene.remove(this.mesh);
     scene.remove(this.trailLine);
+    scene.remove(this.atmosphere);
+    scene.remove(this.glowSprite);
     this.mesh.geometry.dispose();
     this.mesh.material.dispose();
+    this.atmosphere.geometry.dispose();
+    this.atmosphere.material.dispose();
+    this.glowSprite.material.dispose();
     this.trailGeom.dispose();
     this.trailMat.dispose();
+    for (const moon of this.moons) {
+      scene.remove(moon.mesh);
+      moon.mesh.geometry.dispose();
+      moon.mesh.material.dispose();
+    }
+    this.moons = [];
   }
 }
 
@@ -1477,13 +1756,14 @@ function createGravWave(intensity) {
   const mat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(state.config.colors.sun),
     transparent: true,
+    depthWrite: false,
     opacity: Math.min(intensity * 1.2, 1.0),
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending
   });
   const ring = new THREE.Mesh(geom, mat);
   ring.rotation.x = -Math.PI / 2;
-  ring.userData = { life: 0, maxLife: 45, intensity };
+  ring.userData = { life: 0, maxLife: 40, intensity };
   scene.add(ring);
   waveRings.push(ring);
 }
@@ -1493,7 +1773,7 @@ function updateWaveRings() {
     const ring = waveRings[i];
     ring.userData.life++;
     const t = ring.userData.life / ring.userData.maxLife;
-    const scale = 3 + t * 250;
+    const scale = 3 + t * 300;
     ring.scale.set(scale, scale, scale);
     ring.material.opacity = Math.pow(1 - t, 1.5) * ring.userData.intensity * 0.9;
     if (t >= 1) {
@@ -1505,8 +1785,86 @@ function updateWaveRings() {
   }
 }
 
-// ─── PARTICLE SYSTEM ───
-const MAX_PARTICLES = 3000;
+// ─── SUPERNOVA EFFECT ───
+let supernovaFlash = 0;       // current flash intensity (decays each frame)
+let supernovaCooldown = 0;    // frames until next supernova can trigger
+
+function triggerSupernova(intensity) {
+  if (supernovaCooldown > 0) return;
+  supernovaCooldown = 30;  // ~0.5s at 60fps before next one can fire
+
+  // 1) Screen flash
+  supernovaFlash = intensity;
+
+  // 2) Massive particle burst — way bigger than normal emitBurst
+  const count = Math.min(Math.floor(intensity * 200), 200);
+  for (let i = 0; i < count; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const speed = 4 + Math.random() * 14 * intensity;
+    pPos[pHead * 3] = Math.sin(phi) * Math.cos(theta) * 8;
+    pPos[pHead * 3 + 1] = Math.sin(phi) * Math.sin(theta) * 8;
+    pPos[pHead * 3 + 2] = Math.cos(phi) * 8;
+    pVel[pHead].set(
+      Math.sin(phi) * Math.cos(theta) * speed,
+      Math.sin(phi) * Math.sin(theta) * speed,
+      Math.cos(phi) * speed
+    );
+    pLife[pHead] = 1.0;
+    pMaxLife[pHead] = 0.6 + Math.random() * 1.5;
+    pHead = (pHead + 1) % MAX_PARTICLES;
+  }
+
+  // 3) Multiple expanding rings at different angles
+  for (let r = 0; r < 3; r++) {
+    const geom = new THREE.RingGeometry(0.5, 8, 64);
+    const mat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(state.config.colors.sun).lerp(new THREE.Color(1,1,1), 0.5),
+      transparent: true,
+      depthWrite: false,
+      opacity: intensity * 0.9,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending
+    });
+    const ring = new THREE.Mesh(geom, mat);
+    ring.rotation.x = -Math.PI / 2 + (r - 1) * 0.5;
+    ring.rotation.z = r * 0.8;
+    ring.userData = { life: 0, maxLife: 60, intensity };
+    scene.add(ring);
+    waveRings.push(ring);
+  }
+
+  // 4) Sun scale punch
+  sunSnapScale = Math.max(sunSnapScale, intensity * 1.5);
+  sunBounceAmp = intensity * 0.8;
+  sunBouncePhase = 0;
+
+  // 5) Huge camera shake
+  cameraShakeIntensity = Math.max(cameraShakeIntensity, intensity * 35);
+}
+
+function updateSupernovaFlash() {
+  if (supernovaFlash > 0.01) {
+    // Lerp background toward white
+    const bgBase = new THREE.Color(state.config.colors.bg);
+    bgBase.lerp(new THREE.Color(1, 1, 1), supernovaFlash * 0.4);
+    scene.background = bgBase;
+
+    // Pump sun light
+    sunLight.intensity += supernovaFlash * 20;
+
+    // Pump glow sprites
+    sunGlowInner.scale.setScalar(sunGlowInner.scale.x + supernovaFlash * 80);
+    sunGlowInner.material.opacity = Math.min(sunGlowInner.material.opacity + supernovaFlash * 0.4, 1.0);
+    sunGlowOuter.scale.setScalar(sunGlowOuter.scale.x + supernovaFlash * 120);
+
+    supernovaFlash *= 0.85;  // fast decay
+  }
+  if (supernovaCooldown > 0) supernovaCooldown--;
+}
+
+// ─── MASSIVE PARTICLE SYSTEM ───
+const MAX_PARTICLES = 8000;
 const pPos = new Float32Array(MAX_PARTICLES * 3);
 const pVel = [];
 const pLife = new Float32Array(MAX_PARTICLES);
@@ -1531,7 +1889,7 @@ const particleMat = new THREE.ShaderMaterial({
     void main() {
       vLife = life;
       vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-      gl_PointSize = life * 5.0 * (250.0 / -mvPos.z);
+      gl_PointSize = life * 6.0 * (250.0 / -mvPos.z);
       gl_Position = projectionMatrix * mvPos;
     }
   `,
@@ -1541,7 +1899,8 @@ const particleMat = new THREE.ShaderMaterial({
     void main() {
       float d = length(gl_PointCoord - 0.5);
       if (d > 0.5) discard;
-      float alpha = smoothstep(0.5, 0.05, d) * vLife;
+      float glow = smoothstep(0.5, 0.05, d);
+      float alpha = glow * vLife;
       gl_FragColor = vec4(uColor * (1.0 + vLife * 2.0), alpha);
     }
   `,
@@ -1570,15 +1929,14 @@ function emitParticles(intensity, sourcePos) {
 }
 
 function emitBurst(intensity) {
-  // Emit from sun on bass hits
-  const count = Math.floor(intensity * 40);
+  const count = Math.min(Math.floor(intensity * 60), 60);
   for (let i = 0; i < count; i++) {
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.acos(2 * Math.random() - 1);
     const speed = 2 + Math.random() * 6 * intensity;
-    pPos[pHead * 3] = Math.sin(phi) * Math.cos(theta) * 6;
-    pPos[pHead * 3 + 1] = Math.sin(phi) * Math.sin(theta) * 6;
-    pPos[pHead * 3 + 2] = Math.cos(phi) * 6;
+    pPos[pHead * 3] = Math.sin(phi) * Math.cos(theta) * 7;
+    pPos[pHead * 3 + 1] = Math.sin(phi) * Math.sin(theta) * 7;
+    pPos[pHead * 3 + 2] = Math.cos(phi) * 7;
     pVel[pHead].set(
       Math.sin(phi) * Math.cos(theta) * speed,
       Math.sin(phi) * Math.sin(theta) * speed,
@@ -1586,6 +1944,23 @@ function emitBurst(intensity) {
     );
     pLife[pHead] = 1.0;
     pMaxLife[pHead] = 0.3 + Math.random() * 0.8;
+    pHead = (pHead + 1) % MAX_PARTICLES;
+  }
+}
+
+function emitSparkle(planet) {
+  const count = 1 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < count; i++) {
+    pPos[pHead * 3] = planet.pos.x + (Math.random() - 0.5) * planet.baseRadius * 3;
+    pPos[pHead * 3 + 1] = planet.pos.y + (Math.random() - 0.5) * planet.baseRadius * 3;
+    pPos[pHead * 3 + 2] = planet.pos.z + (Math.random() - 0.5) * planet.baseRadius * 3;
+    pVel[pHead].set(
+      (Math.random() - 0.5) * 0.5,
+      (Math.random() - 0.5) * 0.5,
+      (Math.random() - 0.5) * 0.5
+    );
+    pLife[pHead] = 0.3 + Math.random() * 0.4;
+    pMaxLife[pHead] = 1.0 + Math.random() * 1.5;
     pHead = (pHead + 1) % MAX_PARTICLES;
   }
 }
@@ -1654,16 +2029,21 @@ function velocityVerletStep(dt, currentSunMass, gravityMod) {
     body.vel.add(body.acc.clone().multiplyScalar(dt * 0.5));
   }
 
-  // Update meshes
+  // Update meshes, atmosphere, glow
   for (const body of bodies) {
     body.mesh.position.copy(body.pos);
+    body.atmosphere.position.copy(body.pos);
+    body.glowSprite.position.copy(body.pos);
     body.updateTrail();
   }
 }
 
 // ─── AUDIO ANALYSIS ───
-const freqBands = { bass: 0, mids: 0, highs: 0, transient: 0 };
+const freqBands = { bass: 0, subBass: 0, mids: 0, highs: 0, transient: 0 };
 let lastBassEnergy = 0;
+let lastSubBass = 0;
+let audioWarmupFrames = 0;
+let bassWaveCooldown = 0;
 let freqData = null;
 let freqCanvas, freqCtx;
 
@@ -1683,22 +2063,31 @@ function analyzeFrequencyBands() {
   freqData = data;
 
   const binCount = data.length;
+  const subBassEnd = Math.max(1, Math.floor(binCount * 0.03));
   const bassEnd = Math.floor(binCount * 0.1);
   const midEnd = Math.floor(binCount * 0.4);
 
-  let bassSum = 0, midSum = 0, highSum = 0;
+  let subBassSum = 0, bassSum = 0, midSum = 0, highSum = 0;
+  for (let i = 0; i < subBassEnd; i++) subBassSum += data[i];
   for (let i = 0; i < bassEnd; i++) bassSum += data[i];
   for (let i = bassEnd; i < midEnd; i++) midSum += data[i];
   for (let i = midEnd; i < binCount; i++) highSum += data[i];
 
+  freqBands.subBass = (subBassSum / subBassEnd) / 255;
   freqBands.bass = (bassSum / bassEnd) / 255;
   freqBands.mids = (midSum / (midEnd - bassEnd)) / 255;
   freqBands.highs = (highSum / (binCount - midEnd)) / 255;
 
-  // Transient detection (sharp bass increase)
+  // Transient detection (sharp bass increase) — skip warmup to avoid false supernova
   const bassEnergy = freqBands.bass;
-  freqBands.transient = Math.max(0, bassEnergy - lastBassEnergy) * 3;
-  lastBassEnergy = bassEnergy * 0.9 + lastBassEnergy * 0.1;
+  audioWarmupFrames++;
+  if (audioWarmupFrames < 10) {
+    freqBands.transient = 0;
+    lastBassEnergy = bassEnergy;
+  } else {
+    freqBands.transient = Math.max(0, bassEnergy - lastBassEnergy) * 3;
+    lastBassEnergy = bassEnergy * 0.9 + lastBassEnergy * 0.1;
+  }
 }
 
 function drawFrequencyViz() {
@@ -1723,11 +2112,10 @@ function drawFrequencyViz() {
     const val = freqData[idx] / 255;
     const barH = val * h * 0.9;
 
-    // Color by frequency band
     let color;
-    if (i < 8) color = 'rgba(255,107,138,0.8)';        // bass
-    else if (i < 25) color = 'rgba(255,184,107,0.7)';   // mids
-    else color = 'rgba(107,255,211,0.6)';                // highs
+    if (i < 8) color = 'rgba(255,107,138,0.8)';
+    else if (i < 25) color = 'rgba(255,184,107,0.7)';
+    else color = 'rgba(107,255,211,0.6)';
 
     freqCtx.fillStyle = color;
     freqCtx.fillRect(i * barW + 1, h - barH, barW - 2, barH);
@@ -1762,7 +2150,6 @@ function detectBPM(buffer) {
       energies.push(energy / windowSize);
     }
 
-    // Find peaks
     const peaks = [];
     const threshold = energies.reduce((a, b) => a + b, 0) / energies.length * 1.5;
     for (let i = 1; i < energies.length - 1; i++) {
@@ -1773,7 +2160,6 @@ function detectBPM(buffer) {
 
     if (peaks.length < 2) return 120;
 
-    // Average interval between peaks
     let totalInterval = 0;
     for (let i = 1; i < peaks.length; i++) {
       totalInterval += peaks[i] - peaks[i - 1];
@@ -1782,7 +2168,6 @@ function detectBPM(buffer) {
     const intervalSec = avgInterval * 0.05;
     let bpm = Math.round(60 / intervalSec);
 
-    // Clamp to reasonable range
     while (bpm > 200) bpm /= 2;
     while (bpm < 60) bpm *= 2;
     return Math.round(bpm);
@@ -1815,7 +2200,6 @@ function applyTheme(name) {
   state.config.colors.bg = t.bg;
   state.config.bloomIntensity = t.bloomIntensity;
 
-  // Update color inputs
   document.getElementById('color-sun').value = t.sun;
   document.getElementById('color-planet').value = t.planet;
   document.getElementById('color-trail').value = t.trail;
@@ -1835,15 +2219,31 @@ function applyTheme(name) {
 
 function applyColors() {
   const c = state.config.colors;
+
+  // Sun shader + glows + light
   sun.material.uniforms.uColor.value.set(c.sun);
-  sunGlow.material.color.set(c.sun);
+  sunGlowInner.material.color.set(c.sun);
+  sunGlowOuter.material.color.set(c.sun);
   sunLight.color.set(c.sun);
+
+  // Scene background
   scene.background = new THREE.Color(c.bg);
 
-  planets.forEach(p => {
-    p.mesh.material.uniforms.uColor.value.set(c.planet);
-    p.trailMat.uniforms.uColor.value.set(c.trail);
+  // Planets: shader, atmosphere, glow sprites, moons, trail
+  planets.forEach((p, idx) => {
+    p.uniqueColor = getPlanetColor(c.planet, idx);
+    const col = new THREE.Color(p.uniqueColor);
+    p.mesh.material.uniforms.uColor.value.copy(col);
+    p.atmosphere.material.uniforms.uColor.value.copy(col);
+    p.glowSprite.material.color.copy(col);
+    p.trailMat.uniforms.uColor.value.copy(col);
+    // Moon materials
+    for (const moon of p.moons) {
+      moon.mesh.material.color.copy(col.clone().multiplyScalar(0.6));
+    }
   });
+
+  // Particle material
   particleMat.uniforms.uColor.value.set(c.trail);
 }
 
@@ -1903,7 +2303,7 @@ function applyGlitchEffect(ctx, w, h) {
         const srcIdx = (y * w + x) * 4;
         const dstX = Math.min(w - 1, Math.max(0, x + offset));
         const dstIdx = (y * w + dstX) * 4;
-        d[srcIdx] = d[dstIdx]; // R channel shift
+        d[srcIdx] = d[dstIdx];
       }
     }
   }
@@ -1951,65 +2351,108 @@ function animate(timestamp) {
   const melodyRaw = freqBands.highs * state.config.melodyIntensity;
   const drumRaw = freqBands.transient * state.config.drumsIntensity;
 
-  // Bass envelope: fast attack, slow decay — makes bass feel PUNCHY
+  // Bass envelope for physics stability (slow)
   bassEnvelope = bassRaw > bassEnvelope
     ? bassRaw * 0.7 + bassEnvelope * 0.3
     : bassRaw * 0.08 + bassEnvelope * 0.92;
 
-  // Sun always animates
+  // Sun always animates time
   sun.material.uniforms.uTime.value = elapsedTime;
 
   if (simulationRunning) {
-    // ─── BASS → SUN MASS + DRAMATIC PULSE ───
-    const dynamicSunMass = sunMass * (1 + bassEnvelope * 4);
-    const sunScale = 1 + bassEnvelope * 2.5;
-    sun.material.uniforms.uBass.value = bassEnvelope;
-    sun.material.uniforms.uScale.value = sunScale;
-    sunGlow.scale.setScalar(30 + bassEnvelope * 100);
-    sunGlow.material.opacity = 0.3 + bassEnvelope * 0.7;
-    sunLight.intensity = 2 + bassEnvelope * 10;
+    // ─── BASS -> SUN: Spring-damper scale (instant attack, fast bounce-back) ───
+    if (bassRaw > sunSnapScale) {
+      sunSnapScale = bassRaw;
+      sunBounceAmp = bassRaw * 0.5;
+      sunBouncePhase = 0;
+    }
+    sunSnapScale *= 0.82;
+    sunBouncePhase += dt * 18.0;
+    sunBounceAmp *= 0.88;
+    const bounce = sunBounceAmp * Math.sin(sunBouncePhase) * Math.exp(-sunBouncePhase * 0.15);
+    const sunScale = 1 + sunSnapScale * 2.5 + bounce;
 
-    // Sun color flash toward white on strong bass
-    if (bassEnvelope > 0.3) {
-      const flash = (bassEnvelope - 0.3) * 1.4;
+    sun.material.uniforms.uBass.value = sunSnapScale;
+    sun.material.uniforms.uScale.value = sunScale;
+
+    // TWO glow sprites: inner bright + outer dim corona
+    const innerGlowSize = 30 + sunSnapScale * 100;
+    const outerGlowSize = 60 + sunSnapScale * 160;
+    sunGlowInner.scale.setScalar(innerGlowSize);
+    sunGlowInner.material.opacity = 0.4 + sunSnapScale * 0.6;
+    sunGlowOuter.scale.setScalar(outerGlowSize);
+    sunGlowOuter.material.opacity = 0.12 + sunSnapScale * 0.25;
+
+    // Sun point light intensity
+    sunLight.intensity = 2 + sunSnapScale * 12;
+
+    // Color flash toward white on strong bass
+    if (sunSnapScale > 0.3) {
+      const flash = (sunSnapScale - 0.3) * 1.4;
       const baseCol = new THREE.Color(state.config.colors.sun);
       baseCol.lerp(new THREE.Color(1, 1, 1), flash * 0.5);
-      sunGlow.material.color.copy(baseCol);
+      sunGlowInner.material.color.copy(baseCol);
+      sunGlowOuter.material.color.copy(baseCol);
       sunLight.color.copy(baseCol);
     } else {
-      sunGlow.material.color.set(state.config.colors.sun);
+      sunGlowInner.material.color.set(state.config.colors.sun);
+      sunGlowOuter.material.color.set(state.config.colors.sun);
       sunLight.color.set(state.config.colors.sun);
     }
 
-    // ─── HARMONY → GRAVITY MODULATION ───
-    const gravityMod = 1 + harmonyRaw * 2.0;
+    // Dynamic sun mass uses SEPARATE slow envelope for physics stability
+    const dynamicSunMass = sunMass * (1 + bassEnvelope * 2);
 
-    // ─── DRUMS → SHOCKWAVE + CAMERA SHAKE + PLANET KICKS ───
+    // ─── HARMONY -> GRAVITY MODULATION ───
+    const gravityMod = 1 + harmonyRaw * 0.8;
+
+    // ─── DRUMS -> SHOCKWAVE + CAMERA SHAKE + PLANET KICKS ───
     if (drumRaw > 0.15) {
       createGravWave(drumRaw);
-      cameraShakeIntensity = Math.max(cameraShakeIntensity, drumRaw * 18);
+      cameraShakeIntensity = Math.max(cameraShakeIntensity, drumRaw * 20);
 
       // Burst particles from sun
       emitBurst(drumRaw);
 
-      // Kick every planet — tangential + outward radial impulse
+      // Kick every planet (tangential only — no net radial drift)
       planets.forEach(p => {
         const tangent = new THREE.Vector3(-p.pos.z, 0, p.pos.x).normalize();
-        p.vel.add(tangent.multiplyScalar((Math.random() - 0.3) * drumRaw * 1.8));
-        const radial = p.pos.clone().normalize();
-        p.vel.add(radial.multiplyScalar(drumRaw * 1.2));
+        p.vel.add(tangent.multiplyScalar((Math.random() - 0.5) * drumRaw * 2.0));
       });
+
+      // BIG hits → SUPERNOVA
+      if (drumRaw > 0.45) {
+        triggerSupernova(drumRaw);
+      }
+
+      // Background color flash (only if supernova isn't handling it)
+      if (supernovaFlash < 0.1) {
+        const bgBase = new THREE.Color(state.config.colors.bg);
+        const bright = new THREE.Color(state.config.colors.sun);
+        bgBase.lerp(bright, drumRaw * 0.15);
+        scene.background = bgBase;
+      }
+    } else if (drumRaw <= 0.15 && supernovaFlash < 0.01) {
+      scene.background = new THREE.Color(state.config.colors.bg);
     }
     glitchIntensity = drumRaw;
 
     // Camera shake decay
-    cameraShakeIntensity *= 0.85;
+    cameraShakeIntensity *= 0.82;
 
-    // ─── MELODY → PLANET GLOW + PARTICLE TRAILS ───
+    // Supernova flash decay (must be after drum processing)
+    updateSupernovaFlash();
+
+    // ─── MELODY -> PLANET GLOW + ATMOSPHERE + PARTICLES + TRAILS ───
     const totalEnergy = bassEnvelope + harmonyRaw + melodyRaw;
     planets.forEach(p => {
+      // Emissive glow 0.15 to 3.0
       p.mesh.material.uniforms.uEmissive.value = 0.15 + melodyRaw * 3.0;
       p.mesh.material.uniforms.uTime.value = elapsedTime;
+      p.mesh.material.uniforms.uIntensity.value = melodyRaw;
+
+      // Atmosphere intensity pulses with melody
+      p.atmosphere.material.uniforms.uIntensity.value = melodyRaw * 2.0;
 
       // Trail brightness reacts to total energy
       p.trailMat.uniforms.uBrightness.value = 0.6 + totalEnergy * 2.5;
@@ -2018,6 +2461,12 @@ function animate(timestamp) {
       if (melodyRaw > 0.2) {
         emitParticles(melodyRaw, p.pos);
       }
+
+      // Constant sparkle: 1-3 ambient particles per planet per frame
+      emitSparkle(p);
+
+      // Update moon positions
+      p.updateMoons(dt);
     });
 
     // ─── PHYSICS ───
@@ -2028,27 +2477,44 @@ function animate(timestamp) {
       velocityVerletStep(physDt / subSteps, dynamicSunMass, gravityMod);
     }
 
-    // Gentle velocity damping — prevents runaway after many drum kicks
+    // Orbit clamping: pull escapees back, prevent sun collision
+    planets.forEach(p => {
+      const dist = p.pos.length();
+      const maxDist = 250;
+      const minDist = 10;
+      if (dist > maxDist) {
+        // Redirect velocity inward proportionally
+        const radial = p.pos.clone().normalize();
+        const radialSpeed = p.vel.dot(radial);
+        if (radialSpeed > 0) {
+          p.vel.sub(radial.multiplyScalar(radialSpeed * 0.5));
+        }
+      }
+      if (dist < minDist) {
+        // Push out if too close to sun
+        const radial = p.pos.clone().normalize();
+        p.pos.copy(radial.clone().multiplyScalar(minDist));
+        const radialSpeed = p.vel.dot(radial);
+        if (radialSpeed < 0) {
+          p.vel.sub(radial.clone().multiplyScalar(radialSpeed));
+        }
+      }
+    });
+
+    // Gentle velocity damping
     planets.forEach(p => { p.vel.multiplyScalar(0.9997); });
 
     // Update particles + wave rings
     updateParticles(dt);
     updateWaveRings();
 
-    // Background flash on big drum hits
-    if (drumRaw > 0.4) {
-      const bgBase = new THREE.Color(state.config.colors.bg);
-      const bright = new THREE.Color(state.config.colors.sun);
-      bgBase.lerp(bright, drumRaw * 0.15);
-      scene.background = bgBase;
-    } else {
-      scene.background = new THREE.Color(state.config.colors.bg);
-    }
   } else {
     sun.material.uniforms.uBass.value = 0;
     sun.material.uniforms.uScale.value = 1;
-    sunGlow.scale.setScalar(40);
-    sunGlow.material.opacity = 0.4;
+    sunGlowInner.scale.setScalar(40);
+    sunGlowInner.material.opacity = 0.4;
+    sunGlowOuter.scale.setScalar(80);
+    sunGlowOuter.material.opacity = 0.15;
     sunLight.intensity = 2;
     cameraShakeIntensity = 0;
   }
@@ -2078,6 +2544,8 @@ function animate(timestamp) {
 function playAudio() {
   if (!state.audioBuffer) return;
   initAudioContext();
+  audioWarmupFrames = 0;
+  lastBassEnergy = 0;
 
   if (state.sourceNode) {
     state.sourceNode.stop();
@@ -2151,7 +2619,6 @@ async function handleFile(file) {
   state.duration = state.audioBuffer.duration;
   state.currentTime = 0;
 
-  // Update UI
   const zone = document.getElementById('upload-zone');
   zone.classList.add('has-file');
   zone.innerHTML = `
@@ -2170,7 +2637,6 @@ async function handleFile(file) {
     removeFile();
   });
 
-  // BPM detection
   document.getElementById('bpm-value').textContent = '...';
   const bpm = await detectBPM(state.audioBuffer);
   state.bpm = bpm;
@@ -2227,7 +2693,6 @@ async function renderToMP4() {
   document.getElementById('dot-render').classList.add('recording');
   document.getElementById('status-render').textContent = 'Rendering...';
 
-  // Create offscreen renderer
   const offCanvas = document.createElement('canvas');
   offCanvas.width = width;
   offCanvas.height = height;
@@ -2240,7 +2705,6 @@ async function renderToMP4() {
   offCamera.aspect = width / height;
   offCamera.updateProjectionMatrix();
 
-  // Offline audio analysis
   const offlineCtx = new OfflineAudioContext(
     state.audioBuffer.numberOfChannels,
     state.audioBuffer.length,
@@ -2255,31 +2719,30 @@ async function renderToMP4() {
   const renderedAudioBuffer = await offlineCtx.startRendering();
   const audioData = renderedAudioBuffer.getChannelData(0);
 
-  // Capture frames as blobs
   const frameBlobs = [];
   const samplesPerFrame = Math.floor(renderedAudioBuffer.sampleRate / fps);
 
-  // Reset simulation for render
   createPlanets(state.config.planetCount);
   applyColors();
   let renderTime = 0;
   let renderBassEnv = 0;
   let renderPrevEnergy = 0;
+  let renderSunSnap = 0;
+  let renderSunBounceAmp = 0;
+  let renderSunBouncePhase = 0;
+  let renderBassWaveCd = 0;
 
   renderStatus.textContent = 'Capturing frames...';
 
   for (let frame = 0; frame < totalFrames; frame++) {
-    // Extract audio features for this frame
     const sampleStart = frame * samplesPerFrame;
     const sampleEnd = Math.min(sampleStart + samplesPerFrame, audioData.length);
     let energy = 0;
-    let highEnergy = 0;
     for (let s = sampleStart; s < sampleEnd; s++) {
       energy += audioData[s] * audioData[s];
     }
     energy = Math.sqrt(energy / Math.max(1, sampleEnd - sampleStart));
 
-    // Derive frequency bands from energy + rate of change
     const bassEst = Math.min(energy * 2.0, 1.0);
     const midsEst = Math.min(energy * 1.2, 1.0);
     const highsEst = Math.min(energy * 0.8, 1.0);
@@ -2291,74 +2754,106 @@ async function renderToMP4() {
     const melodyRaw = highsEst * state.config.melodyIntensity;
     const drumRaw = transientEst * state.config.drumsIntensity;
 
-    // Bass envelope
     renderBassEnv = bassRaw > renderBassEnv
       ? bassRaw * 0.7 + renderBassEnv * 0.3
       : bassRaw * 0.08 + renderBassEnv * 0.92;
 
-    renderTime += 1 / fps;
+    const frameDt = 1 / fps;
+    renderTime += frameDt;
 
-    // ─── Apply same dramatic mappings as live preview ───
-    const dynamicSunMass = sunMass * (1 + renderBassEnv * 4);
-    const sunScale = 1 + renderBassEnv * 2.5;
-    sun.material.uniforms.uBass.value = renderBassEnv;
-    sun.material.uniforms.uScale.value = sunScale;
+    // Sun spring physics for render
+    if (bassRaw > renderSunSnap) {
+      renderSunSnap = bassRaw;
+      renderSunBounceAmp = bassRaw * 0.5;
+      renderSunBouncePhase = 0;
+    }
+    renderSunSnap *= 0.82;
+    renderSunBouncePhase += frameDt * 18.0;
+    renderSunBounceAmp *= 0.88;
+    const rBounce = renderSunBounceAmp * Math.sin(renderSunBouncePhase) * Math.exp(-renderSunBouncePhase * 0.15);
+    const rSunScale = 1 + renderSunSnap * 2.5 + rBounce;
+
+    const dynamicSunMass = sunMass * (1 + renderBassEnv * 2);
+    sun.material.uniforms.uBass.value = renderSunSnap;
+    sun.material.uniforms.uScale.value = rSunScale;
     sun.material.uniforms.uTime.value = renderTime;
-    sunGlow.scale.setScalar(30 + renderBassEnv * 100);
-    sunGlow.material.opacity = 0.3 + renderBassEnv * 0.7;
-    sunLight.intensity = 2 + renderBassEnv * 10;
+    sunGlowInner.scale.setScalar(30 + renderSunSnap * 100);
+    sunGlowInner.material.opacity = 0.4 + renderSunSnap * 0.6;
+    sunGlowOuter.scale.setScalar(60 + renderSunSnap * 160);
+    sunGlowOuter.material.opacity = 0.12 + renderSunSnap * 0.25;
+    sunLight.intensity = 2 + renderSunSnap * 12;
 
-    // Sun flash
-    if (renderBassEnv > 0.3) {
-      const flash = (renderBassEnv - 0.3) * 1.4;
+    if (renderSunSnap > 0.3) {
+      const flash = (renderSunSnap - 0.3) * 1.4;
       const baseCol = new THREE.Color(state.config.colors.sun);
       baseCol.lerp(new THREE.Color(1, 1, 1), flash * 0.5);
-      sunGlow.material.color.copy(baseCol);
+      sunGlowInner.material.color.copy(baseCol);
+      sunGlowOuter.material.color.copy(baseCol);
       sunLight.color.copy(baseCol);
     } else {
-      sunGlow.material.color.set(state.config.colors.sun);
+      sunGlowInner.material.color.set(state.config.colors.sun);
+      sunGlowOuter.material.color.set(state.config.colors.sun);
       sunLight.color.set(state.config.colors.sun);
     }
 
-    const gravityMod = 1 + harmonyRaw * 2.0;
+    const gravityMod = 1 + harmonyRaw * 0.8;
 
-    // Drum shockwaves + planet kicks
     if (drumRaw > 0.15) {
       createGravWave(drumRaw);
       emitBurst(drumRaw);
       planets.forEach(p => {
         const tangent = new THREE.Vector3(-p.pos.z, 0, p.pos.x).normalize();
-        p.vel.add(tangent.multiplyScalar((Math.random() - 0.3) * drumRaw * 1.8));
-        const radial = p.pos.clone().normalize();
-        p.vel.add(radial.multiplyScalar(drumRaw * 1.2));
+        p.vel.add(tangent.multiplyScalar((Math.random() - 0.5) * drumRaw * 2.0));
       });
+      if (drumRaw > 0.45) {
+        triggerSupernova(drumRaw);
+      }
     }
 
-    // Melody + energy effects
     const totalEnergy = renderBassEnv + harmonyRaw + melodyRaw;
     planets.forEach(p => {
       p.mesh.material.uniforms.uEmissive.value = 0.15 + melodyRaw * 3.0;
       p.mesh.material.uniforms.uTime.value = renderTime;
+      p.mesh.material.uniforms.uIntensity.value = melodyRaw;
+      p.atmosphere.material.uniforms.uIntensity.value = melodyRaw * 2.0;
       p.trailMat.uniforms.uBrightness.value = 0.6 + totalEnergy * 2.5;
       if (melodyRaw > 0.2) emitParticles(melodyRaw, p.pos);
+      emitSparkle(p);
+      p.updateMoons(frameDt);
     });
 
-    // Background flash
-    if (drumRaw > 0.4) {
-      const bgBase = new THREE.Color(state.config.colors.bg);
-      bgBase.lerp(new THREE.Color(state.config.colors.sun), drumRaw * 0.15);
-      scene.background = bgBase;
-    } else {
-      scene.background = new THREE.Color(state.config.colors.bg);
+    updateSupernovaFlash();
+    if (supernovaFlash < 0.01) {
+      if (drumRaw > 0.4) {
+        const bgBase = new THREE.Color(state.config.colors.bg);
+        bgBase.lerp(new THREE.Color(state.config.colors.sun), drumRaw * 0.15);
+        scene.background = bgBase;
+      } else {
+        scene.background = new THREE.Color(state.config.colors.bg);
+      }
     }
 
-    // Physics
     const physDt = 0.16 * state.config.timeScale;
     const subSteps = 3;
     for (let s = 0; s < subSteps; s++) {
       computeAccelerations(planets, dynamicSunMass, gravityMod);
       velocityVerletStep(physDt / subSteps, dynamicSunMass, gravityMod);
     }
+    // Orbit clamping in render
+    planets.forEach(p => {
+      const dist = p.pos.length();
+      if (dist > 250) {
+        const radial = p.pos.clone().normalize();
+        const rs = p.vel.dot(radial);
+        if (rs > 0) p.vel.sub(radial.multiplyScalar(rs * 0.5));
+      }
+      if (dist < 10) {
+        const radial = p.pos.clone().normalize();
+        p.pos.copy(radial.clone().multiplyScalar(10));
+        const rs = p.vel.dot(radial);
+        if (rs < 0) p.vel.sub(radial.clone().multiplyScalar(rs));
+      }
+    });
     planets.forEach(p => { p.vel.multiplyScalar(0.9997); });
     updateParticles(1 / fps);
     updateWaveRings();
@@ -2368,7 +2863,6 @@ async function renderToMP4() {
       starField.rotation.y = renderTime * 0.005;
     }
 
-    // Camera orbit during render
     const renderAngle = (frame / totalFrames) * Math.PI * 0.5 + cameraAngle;
     offCamera.position.set(
       Math.sin(renderAngle) * Math.cos(cameraElevation) * cameraDistance,
@@ -2379,16 +2873,13 @@ async function renderToMP4() {
 
     offRenderer.render(scene, offCamera);
 
-    // Capture frame
     const blob = await new Promise(r => offCanvas.toBlob(r, 'image/jpeg', 0.92));
     frameBlobs.push(blob);
 
-    // Update progress
     const progress = ((frame + 1) / totalFrames) * 50;
     progressFill.style.width = progress + '%';
     renderStatus.textContent = `Frame ${frame + 1} / ${totalFrames} (${Math.round(progress)}%)`;
 
-    // Yield to keep UI responsive
     if (frame % 4 === 0) {
       await new Promise(r => setTimeout(r, 0));
     }
@@ -2402,23 +2893,19 @@ async function renderToMP4() {
     outputCanvas.height = height;
     const outputCtx = outputCanvas.getContext('2d');
 
-    // Set up audio track for the output
     const encodeAudioCtx = new AudioContext();
     const encodeSource = encodeAudioCtx.createBufferSource();
     encodeSource.buffer = state.audioBuffer;
     const audioDest = encodeAudioCtx.createMediaStreamDestination();
     encodeSource.connect(audioDest);
-    // Also connect to speakers so user hears during encode
     encodeSource.connect(encodeAudioCtx.destination);
 
-    // Combine video + audio tracks
     const videoStream = outputCanvas.captureStream(fps);
     const combinedStream = new MediaStream([
       ...videoStream.getVideoTracks(),
       ...audioDest.stream.getAudioTracks()
     ]);
 
-    // Pick best supported codec
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
       : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
@@ -2437,11 +2924,9 @@ async function renderToMP4() {
       mediaRecorder.onstop = () => resolve();
     });
 
-    // Start audio and recorder simultaneously
     mediaRecorder.start();
     encodeSource.start();
 
-    // Draw frames at real-time speed so audio stays in sync
     for (let i = 0; i < frameBlobs.length; i++) {
       const img = await createImageBitmap(frameBlobs[i]);
       outputCtx.drawImage(img, 0, 0);
@@ -2494,7 +2979,6 @@ async function renderToMP4() {
   document.getElementById('dot-render').classList.remove('recording');
   document.getElementById('status-render').textContent = 'Complete';
 
-  // Recreate planets for live view
   createPlanets(state.config.planetCount);
   applyColors();
 }
@@ -2576,6 +3060,12 @@ function initUI() {
     state.config.timeScale = parseFloat(v);
     return parseFloat(v).toFixed(1) + 'x';
   });
+  bindSlider('orbit-dist', 'orbit-dist-val', v => {
+    state.config.orbitScale = parseFloat(v);
+    createPlanets(state.config.planetCount);
+    applyColors();
+    return parseFloat(v).toFixed(1) + 'x';
+  });
   bindSlider('trail-length', 'trail-length-val', v => {
     state.config.trailLength = Math.round(v);
     planets.forEach(p => p.trailMax = Math.round(v));
@@ -2627,7 +3117,6 @@ function initUI() {
   document.getElementById('btn-start-preview').addEventListener('click', () => {
     state.isPreviewing = true;
     simulationRunning = true;
-    // Reset planets for clean initial orbits
     createPlanets(state.config.planetCount);
     applyColors();
     document.getElementById('empty-state').classList.add('hidden');
@@ -2697,6 +3186,7 @@ initUI();
 animate(0);
 
 })();
+
 </script>
 </body>
 </html>
